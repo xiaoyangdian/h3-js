@@ -1,0 +1,14 @@
+# 第三方参考仓库：各自是独立 clone（自带 .git），不进本库
+Core/
+Workbench/
+h3m2json/
+
+# 临时调试产物（截图 / 一次性诊断脚本）
+_shot*.html
+_shot*.png
+_dbg*.js
+
+# 系统垃圾
+*.log
+.DS_Store
+Thumbs.db

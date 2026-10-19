@@ -1,0 +1,2180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>战场原型 · 15×11 六边形</title>
+<style>
+  :root{
+    --ink:#22261d; --ink2:#5d6255; --ink3:#8b907f;
+    --paper:#f4f5ef; --field:#e7eade; --line:#c8ccba; --hex:#fbfcf7;
+    --us:#2f6fb5; --usD:#235689; --usL:#e4eefa;
+    --them:#b34a3f; --themD:#8a3830; --themL:#f8e7e4;
+    --ok:#3f7a3f; --warn:#b07b1e;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--paper); color:var(--ink);
+    font:14px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:20px}
+
+  .topbar{display:flex;align-items:center;gap:14px;margin-bottom:14px;flex-wrap:wrap}
+  .round{font-size:13px;color:var(--ink2);white-space:nowrap}
+  .round b{color:var(--ink);font-size:17px;font-variant-numeric:tabular-nums}
+  .queue{display:flex;gap:6px;align-items:center;flex:1;min-width:0;overflow:hidden}
+  .qtok{
+    width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    font-size:13px;color:#fff;flex:0 0 auto;position:relative;border:2px solid transparent;
+  }
+  .qtok.us{background:var(--us)} .qtok.them{background:var(--them)}
+  .qtok.now{border-color:var(--ink);transform:scale(1.08)}
+  .qtok.dead{opacity:.25}
+  .qtok span{position:absolute;bottom:-2px;right:-2px;background:#fff;color:var(--ink);
+    font-size:9px;border-radius:4px;padding:0 3px;font-variant-numeric:tabular-nums;line-height:12px}
+  .spacer{flex:1}
+
+  .stage{display:grid;grid-template-columns:minmax(0,1fr) 268px;gap:16px;align-items:start}
+  @media (max-width:880px){ .stage{grid-template-columns:minmax(0,1fr)} }
+  @media (max-width:640px){
+    .field{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .field svg{min-width:520px}
+    .wrap{padding:12px}
+    .queue{overflow-x:auto;flex-wrap:nowrap}
+    /* 触屏确认条贴到屏幕底部，否则场地下方要滚动才看得见，点了像没反应 */
+    .confirmbar.show{position:fixed;left:10px;right:10px;bottom:10px;z-index:40;margin:0;
+      box-shadow:0 8px 28px rgba(0,0,0,.22)}
+  }
+
+  .field{
+    background:var(--field);border:1px solid var(--line);border-radius:14px;padding:8px;
+    position:relative;overflow:hidden;
+  }
+  svg{display:block;width:100%;height:auto}
+
+  .hex{fill:var(--hex);stroke:var(--line);stroke-width:1;transition:fill .12s}
+  .hex.obstacle{fill:#c3bfae;stroke:#a9a595}
+  .hex.in-range{fill:#d6e6f7;stroke:#a8c6e4}
+  .hex.in-range.can-move{cursor:pointer}
+  .hex.in-range.can-move:hover{fill:#c2daf3}
+  .hex.atk{fill:#f6d5d0;stroke:#e0a69d}
+  .hex.atk.can-attack{cursor:crosshair}
+  .hex.sel{fill:#ffeec2;stroke:#e0b855;stroke-width:2}
+  .hex.approach{fill:#ffd9b0;stroke:#d3762a;stroke-width:1.6;stroke-dasharray:5 3;pointer-events:none}
+  .hex.approach-opt{fill:#ffe6c4;stroke:#d3762a;stroke-width:1.3;stroke-dasharray:4 3;pointer-events:none}
+  .hex.breath{fill:#efd9f2;stroke:#a254b0;stroke-width:1.5;stroke-dasharray:4 2;pointer-events:none}
+  /* 选位模式：候选格的龙息落点只套一圈紫线，不填色 —— 填了会把站在那格的单位糊住 */
+  .hex.breath-ghost{fill:none;stroke:#8d2b9e;stroke-width:2;stroke-dasharray:4 3;pointer-events:none}
+
+  /* 攻击光标：向下箭头（仿原版剑形指示） */
+  g.unit.foe, .hex.can-attack{
+    cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M16 3 L29 28 L16 22 L3 28 Z' fill='%23d3762a' stroke='%23fff' stroke-width='2.2' stroke-linejoin='round'/%3E%3C/svg%3E") 16 3, crosshair;
+  }
+  g.unit.foe .body{stroke:#d3762a;stroke-width:3;stroke-dasharray:7 4;animation:foeDash .55s linear infinite}
+  @keyframes foeDash{to{stroke-dashoffset:-11}}
+  svg{touch-action:manipulation}
+  #previewLayer{pointer-events:none}
+
+  g.unit{cursor:pointer;transition:transform .26s cubic-bezier(.32,.72,.35,1)}
+  g.unit .body{stroke:#fff;stroke-width:2}
+  g.unit.us .body{fill:var(--us)} g.unit.them .body{fill:var(--them)}
+  g.unit .glyph{fill:#fff;font-size:14px;font-weight:500;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+  g.unit .badge{fill:rgba(20,24,16,.82)}
+  g.unit .cnt{fill:#fff;font-size:9.5px;text-anchor:middle;dominant-baseline:central;pointer-events:none;font-variant-numeric:tabular-nums}
+  g.unit .hpbg{fill:rgba(20,24,16,.28)}
+  g.unit .hpbar{fill:#5da35d}
+  g.unit.them .hpbar{fill:#d06a5e}
+  g.unit.active .body{stroke:#22261d;stroke-width:2.5}
+  g.unit.defending .body{stroke:#e0b855;stroke-width:3}
+  g.unit.deadanim{animation:die .4s ease forwards}
+  @keyframes die{to{opacity:0;transform:translateY(6px) scale(.7)}}
+  g.unit.hitanim{animation:hit .18s ease}
+  @keyframes hit{0%,100%{filter:none}50%{filter:brightness(1.9)}}
+
+  text.floater{font-size:13px;font-weight:500;text-anchor:middle;pointer-events:none;
+    animation:floatUp .95s ease-out forwards;font-variant-numeric:tabular-nums}
+  @keyframes floatUp{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(-26px)}}
+  text.floater.us{fill:var(--usD)} text.floater.them{fill:var(--themD)}
+
+  /* ── 攻击特效 ── */
+  .fx{pointer-events:none}
+  .fx-arc{fill:none;stroke-linecap:round;stroke-dasharray:62;stroke-dashoffset:62;
+    animation:fxArc .26s cubic-bezier(.25,.9,.3,1) forwards}
+  @keyframes fxArc{
+    0%{stroke-dashoffset:62;opacity:1}
+    62%{stroke-dashoffset:0;opacity:.95}
+    100%{stroke-dashoffset:0;opacity:0}
+  }
+  .fx-spark{stroke-linecap:round;animation:fxSpark .34s ease-out forwards}
+  @keyframes fxSpark{0%{opacity:.95}65%{opacity:.55}100%{opacity:0}}
+  .fx-trail{animation:fxTrail .22s ease-out forwards}
+  @keyframes fxTrail{0%{opacity:.7}100%{opacity:0}}
+  .field.shake{animation:fxShake .26s ease}
+  @keyframes fxShake{
+    15%{transform:translate(-2.5px,1px)}35%{transform:translate(3px,-1px)}
+    55%{transform:translate(-3px,1.5px)}78%{transform:translate(2px,0)}
+    100%{transform:translate(0,0)}
+  }
+  text.floater.big{font-size:18px;font-weight:600}
+  text.floater.small{font-size:10.5px}
+  text.floater.kill{fill:var(--ink2);font-size:10.5px}
+
+  .hint{margin-top:8px;font-size:12px;color:var(--ink3);text-align:center;min-height:19px}
+
+  .confirmbar{display:none;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;
+    background:#fff;border:1px solid #d3762a;border-radius:12px}
+  .confirmbar.show{display:flex}
+  .confirmbar .txt{flex:1;min-width:0;font-size:12.5px;line-height:1.45;color:var(--ink)}
+  .confirmbar .txt b{font-weight:500;color:#b8621f}
+  .confirmbar button{flex:0 0 auto;padding:8px 14px}
+
+  .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
+  .card h3{margin:0 0 8px;font-size:12px;font-weight:500;color:var(--ink3)}
+  .who{display:flex;align-items:center;gap:9px;margin-bottom:8px}
+  .dot{width:28px;height:28px;border-radius:50%;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex:0 0 auto}
+  .dot.us{background:var(--us)} .dot.them{background:var(--them)}
+  .who .n{font-size:14px;line-height:1.3}
+  .who .c{font-size:12px;color:var(--ink2)}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:2px 10px;font-size:12px;color:var(--ink2);font-variant-numeric:tabular-nums}
+  .stats b{color:var(--ink);font-weight:500}
+  .row{display:flex;justify-content:space-between;font-size:12.5px;padding:2px 0}
+  .row span:first-child{color:var(--ink2)}
+  .row b{font-variant-numeric:tabular-nums;font-weight:500}
+  .dmg{color:var(--themD)}
+  .btns{display:flex;gap:8px;margin-bottom:12px}
+  button{
+    flex:1;font:inherit;font-size:13px;padding:7px 10px;border-radius:9px;cursor:pointer;
+    background:#fff;border:1px solid var(--line);color:var(--ink);transition:.12s;
+  }
+  button:hover:not(:disabled){border-color:var(--ink3);background:#fafbf6}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+  button.primary:hover:not(:disabled){background:#3a4032;border-color:#3a4032}
+
+  .log{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+    height:190px;overflow-y:auto;font-size:12px;line-height:1.55}
+  .log p{margin:0 0 5px;color:var(--ink2)}
+  .log p.us{color:var(--usD)} .log p.them{color:var(--themD)}
+  .log p.sys{color:var(--ink3);border-top:1px dashed var(--line);padding-top:5px;margin-top:7px}
+
+  .over{position:absolute;inset:0;background:rgba(244,245,239,.94);display:flex;
+    flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:14px}
+  .over h2{margin:0;font-size:20px;font-weight:500}
+  .over p{margin:0;color:var(--ink2);font-size:13px}
+  .over button{flex:0 0 auto;padding:8px 20px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="round">回合 <b id="roundNo">1</b></div>
+    <div class="queue" id="queue"></div>
+    <button id="restart" style="flex:0 0 auto">重开</button>
+  </div>
+
+  <div class="stage">
+    <div>
+      <div class="field" id="field">
+        <svg id="bf"></svg>
+      </div>
+      <div class="confirmbar" id="confirmBar">
+        <div class="txt" id="confirmText"></div>
+        <button id="cfNo">取消</button>
+        <button id="cfYes" class="primary">攻击</button>
+      </div>
+      <div class="hint" id="hint">点空地＝只移动，走完即结束 · 点敌人＝走过去打（可挑落脚格）</div>
+    </div>
+
+    <aside>
+      <div class="card" id="curCard" style="display:none"></div>
+      <div class="btns">
+        <button id="btnDefend">防御</button>
+        <button id="btnWait">等待</button>
+      </div>
+      <div class="log" id="log"></div>
+    </aside>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var W = 15, H = 11, SIZE = 24, PAD = 12;
+  var HEXW = Math.sqrt(3) * SIZE;
+  var VSP = SIZE * 1.5;
+  var VW = Math.ceil(HEXW * (W + 0.5) + PAD * 2);
+  var VH = Math.ceil(SIZE * 2 + (H - 1) * VSP + PAD * 2);
+  var SVGNS = "http://www.w3.org/2000/svg";
+
+  var svg = document.getElementById("bf");
+  svg.setAttribute("viewBox", "0 0 " + VW + " " + VH);
+
+  var gHex = document.createElementNS(SVGNS, "g");
+  var gPrev = document.createElementNS(SVGNS, "g");
+  var gUnit = document.createElementNS(SVGNS, "g");
+  var gFx = document.createElementNS(SVGNS, "g");
+  gPrev.setAttribute("id", "previewLayer");
+  svg.appendChild(gHex); svg.appendChild(gPrev); svg.appendChild(gUnit); svg.appendChild(gFx);
+
+  var defs = document.createElementNS(SVGNS, "defs");
+  var mk = document.createElementNS(SVGNS, "marker");
+  mk.setAttribute("id", "atkArrow");
+  mk.setAttribute("viewBox", "0 0 12 12");
+  mk.setAttribute("refX", "9"); mk.setAttribute("refY", "6");
+  mk.setAttribute("markerWidth", "7"); mk.setAttribute("markerHeight", "7");
+  mk.setAttribute("orient", "auto");
+  var mkp = document.createElementNS(SVGNS, "path");
+  mkp.setAttribute("d", "M1 1 L11 6 L1 11 Z");
+  mkp.setAttribute("fill", "#d3762a");
+  mk.appendChild(mkp);
+  defs.appendChild(mk);
+
+  var mk2 = document.createElementNS(SVGNS, "marker");
+  mk2.setAttribute("id", "breathArrow");
+  mk2.setAttribute("viewBox", "0 0 12 12");
+  mk2.setAttribute("refX", "9"); mk2.setAttribute("refY", "6");
+  mk2.setAttribute("markerWidth", "7"); mk2.setAttribute("markerHeight", "7");
+  mk2.setAttribute("orient", "auto");
+  var mkp2 = document.createElementNS(SVGNS, "path");
+  mkp2.setAttribute("d", "M1 1 L11 6 L1 11 Z");
+  mkp2.setAttribute("fill", "#a254b0");
+  mk2.appendChild(mkp2);
+  defs.appendChild(mk2);
+
+  // 选位模式的细方向箭头：候选格 → 目标，比主箭头小一号，六个方向同屏也不打架
+  var mk3 = document.createElementNS(SVGNS, "marker");
+  mk3.setAttribute("id", "dirArrow");
+  mk3.setAttribute("viewBox", "0 0 12 12");
+  mk3.setAttribute("refX", "9"); mk3.setAttribute("refY", "6");
+  mk3.setAttribute("markerWidth", "6.5"); mk3.setAttribute("markerHeight", "6.5");
+  mk3.setAttribute("orient", "auto");
+  var mkp3 = document.createElementNS(SVGNS, "path");
+  mkp3.setAttribute("d", "M1 1 L11 6 L1 11 Z");
+  mkp3.setAttribute("fill", "#d3762a");
+  mk3.appendChild(mkp3);
+  defs.appendChild(mk3);
+
+  // 龙息用的火焰渐变（白心 → 橙 → 暗红）
+  var fgrd = document.createElementNS(SVGNS, "linearGradient");
+  fgrd.setAttribute("id", "fxFire");
+  fgrd.setAttribute("x1", "0%"); fgrd.setAttribute("y1", "0%");
+  fgrd.setAttribute("x2", "100%"); fgrd.setAttribute("y2", "0%");
+  [["0%", "#fffdf0", ".98"], ["22%", "#ffe07a", ".96"],
+   ["55%", "#ff9c33", ".86"], ["85%", "#d9462a", ".6"], ["100%", "#a02a1e", "0"]]
+    .forEach(function(st){
+      var s = document.createElementNS(SVGNS, "stop");
+      s.setAttribute("offset", st[0]);
+      s.setAttribute("stop-color", st[1]);
+      s.setAttribute("stop-opacity", st[2]);
+      fgrd.appendChild(s);
+    });
+  defs.appendChild(fgrd);
+
+  // 命中光晕（径向）
+  var rgrd = document.createElementNS(SVGNS, "radialGradient");
+  rgrd.setAttribute("id", "fxGlow");
+  [["0%", "#fff8e0", ".95"], ["45%", "#ffd479", ".55"], ["100%", "#ff9c33", "0"]]
+    .forEach(function(st){
+      var s = document.createElementNS(SVGNS, "stop");
+      s.setAttribute("offset", st[0]);
+      s.setAttribute("stop-color", st[1]);
+      s.setAttribute("stop-opacity", st[2]);
+      rgrd.appendChild(s);
+    });
+  defs.appendChild(rgrd);
+
+  svg.appendChild(defs);
+
+  function center(x, y) {
+    return {
+      cx: PAD + HEXW / 2 + x * HEXW + (y & 1) * (HEXW / 2),
+      cy: PAD + SIZE + y * VSP
+    };
+  }
+
+  var DIRS = [
+    [[1,0],[0,-1],[-1,-1],[-1,0],[-1,1],[0,1]],
+    [[1,0],[1,-1],[0,-1],[-1,0],[0,1],[1,1]]
+  ];
+
+  function neighbors(x, y) {
+    var d = DIRS[y & 1], out = [];
+    for (var i = 0; i < 6; i++) {
+      var nx = x + d[i][0], ny = y + d[i][1];
+      if (nx >= 0 && nx < W && ny >= 0 && ny < H) out.push([nx, ny]);
+    }
+    return out;
+  }
+
+  function toCube(x, y) {
+    var q = x - ((y - (y & 1)) / 2);
+    return [q, -q - y, y];
+  }
+
+  function dist(ax, ay, bx, by) {
+    var a = toCube(ax, ay), b = toCube(bx, by);
+    return (Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) + Math.abs(a[2]-b[2])) / 2;
+  }
+
+  function key(x, y) { return x + "," + y; }
+
+  // cube 坐标逆变换：用来算"沿攻击方向再多走一格"
+  function fromCube(c) {
+    var y = c[2], x = c[0] + ((y - (y & 1)) / 2);
+    if (x < 0 || x >= W || y < 0 || y >= H) return null;
+    return [x, y];
+  }
+
+  // 龙息：从 (fx,fy) 打 (tx,ty)，同一方向再往前一格也吃伤害
+  function breathHex(fx, fy, tx, ty) {
+    var a = toCube(fx, fy), b = toCube(tx, ty);
+    var d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    return fromCube([b[0] + d[0], b[1] + d[1], b[2] + d[2]]);
+  }
+
+  var ROCKS = [[7,3],[8,7],[6,8],[9,2]];
+
+  // breath: 龙息 —— 命中目标后，沿攻击方向再打一格（原版 TWO_HEX_ATTACK_BREATH）
+  // size: 2 = 原版双格生物（横向占两格，尾格固定朝"背后"：我方在左、敌方在右）
+  var ROSTER = [
+    {id:"A1", side:"us",   name:"枪兵",   glyph:"枪", count:60, perHp:10, att:4,  def:5,  dmg:[1,3],   speed:4,  x:1, y:5},
+    {id:"A2", side:"us",   name:"弓箭手", glyph:"弓", count:40, perHp:10, att:6,  def:3,  dmg:[2,3],   speed:4,  x:0, y:2, ranged:true, shots:12},
+    {id:"A3", side:"us",   name:"狮鹫",   glyph:"狮", count:12, perHp:25, att:8,  def:8,  dmg:[3,6],   speed:6,  x:1, y:8, size:2},
+    {id:"A4", side:"us",   name:"骑士",   glyph:"骑", count:10, perHp:40, att:10, def:9,  dmg:[7,12],  speed:7,  x:2, y:3, joust:true, size:2},
+    {id:"A5", side:"us",   name:"绿龙",   glyph:"龙", count:3,  perHp:180,att:18, def:18, dmg:[40,50], speed:9,  x:3, y:6, breath:true, size:2},
+    {id:"E1", side:"them", name:"魔童",   glyph:"童", count:80, perHp:4,  att:2,  def:3,  dmg:[1,2],   speed:5,  x:12, y:5},
+    {id:"E2", side:"them", name:"恶魔犬", glyph:"犬", count:20, perHp:25, att:10, def:6,  dmg:[2,5],   speed:8,  x:12, y:2, size:2},
+    {id:"E3", side:"them", name:"哥革",   glyph:"哥", count:30, perHp:13, att:6,  def:4,  dmg:[2,4],   speed:4,  x:14, y:8, ranged:true, shots:12},
+    {id:"E4", side:"them", name:"长角魔", glyph:"魔", count:6,  perHp:110,att:10, def:10, dmg:[7,12],  speed:5,  x:13, y:5}
+  ];
+
+  var units, order, roundNo, selected, hasMoved, moveMap, atkSet, over;
+  var hoverUnit = null, pendingAttack = null, lastPT = "mouse";
+  var busy = false;           // 走位动画进行中，屏蔽输入
+  var stepDelay = 70;         // 每走一格的间隔；0 = 同步走完（测试用）
+  var approachMode = null;    // {target} 正在为哪个目标挑落脚格
+  var chosenApproach = null;  // "x,y" 手动选中的落脚格
+  var lastHoverId = null;     // 上一次悬停的单位，用于重置手动选的落脚格
+
+  svg.addEventListener("pointerdown", function(e){
+    lastPT = (e && e.pointerType) || "mouse";
+  });
+
+  var hexEls = {};
+  (function buildHexes() {
+    for (var y = 0; y < H; y++) {
+      for (var x = 0; x < W; x++) {
+        var c = center(x, y), pts = [];
+        for (var i = 0; i < 6; i++) {
+          var a = (-90 + 60 * i) * Math.PI / 180;
+          pts.push((c.cx + SIZE * Math.cos(a)).toFixed(2) + "," + (c.cy + SIZE * Math.sin(a)).toFixed(2));
+        }
+        var p = document.createElementNS(SVGNS, "polygon");
+        p.setAttribute("points", pts.join(" "));
+        p.setAttribute("class", "hex");
+        p.dataset.x = x; p.dataset.y = y;
+        p.addEventListener("click", onHexClick);
+        p.addEventListener("mouseenter", function(){
+          onHexHover(+this.dataset.x, +this.dataset.y);
+        });
+        gHex.appendChild(p);
+        hexEls[key(x, y)] = p;
+      }
+    }
+    ROCKS.forEach(function(r){
+      var e = hexEls[key(r[0], r[1])];
+      if (e) { e.classList.add("obstacle"); }
+    });
+    for (var i = 0; i < ROCKS.length; i++) {
+      var c2 = center(ROCKS[i][0], ROCKS[i][1]);
+      var t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", c2.cx); t.setAttribute("y", c2.cy);
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("dominant-baseline", "central");
+      t.setAttribute("font-size", "15");
+      t.setAttribute("fill", "#8a8676");
+      t.setAttribute("pointer-events", "none");
+      t.textContent = "\u25B2";
+      gHex.appendChild(t);
+    }
+  })();
+
+  function isRock(x, y) {
+    for (var i = 0; i < ROCKS.length; i++) if (ROCKS[i][0] === x && ROCKS[i][1] === y) return true;
+    return false;
+  }
+
+  function unitAt(x, y, ignore) {
+    for (var i = 0; i < units.length; i++) {
+      var u = units[i];
+      // ignore：查"这一格上有别人吗"时要跳过自己。双格单位按候选朝向占位时，
+      // 自己可能正好盖住同格的敌人，不跳过就会把敌人遮住、判定成"站得下"。
+      if (u.dead || u === ignore) continue;
+      if (coversHex(u, x, y)) return u;
+    }
+    return null;
+  }
+
+  /* ── 双格单位 ────────────────────────────────────────────
+     双格生物占「头 + 尾」两格，且两格始终在同一行左右相邻（H3 里双格单位
+     永远是横躺的，不会斜着摆）。关键是**它能调头**：
+       · (x,y) 是头格，尾巴在 dir 那一侧：dir = -1 左 / +1 右
+       · 打左边的敌人时它把头扭过去——头在右、尾在左就够不着，实际是头在左、
+         尾在右，也就是 dir 翻成 +1；占的两格没变，变的只是哪一格算"头"
+     所以朝向不能按阵营写死（写死就会"绕到敌人右边就站不上"，
+     也会出现"点自己的尾巴格被判成头格撞墙"）。
+     VCMI: Unit::occupiedHex() / headDirection() 求的是"当前朝向"，
+     原版在攻击时会转向目标，这里显式建模成可变的 dir。 */
+  function isWide(u) { return u && u.size === 2; }
+
+  function defDir(u) { return (u && u.side === "us") ? -1 : 1; }
+  function dirOf(u) { return (u && (u.dir === 1 || u.dir === -1)) ? u.dir : defDir(u); }
+
+  // 双格单位的另一格；d 可指定朝向，不传就用当前朝向；单格或出界返回 null
+  function tailHex(u, x, y, d) {
+    if (!isWide(u)) return null;
+    var tx = x + (d === undefined ? dirOf(u) : d);
+    if (tx < 0 || tx >= W) return null;
+    return [tx, y];
+  }
+
+  function coversHex(u, x, y) {
+    if (u.x === x && u.y === y) return true;
+    var t = tailHex(u, u.x, u.y);          // 尾巴按单位自己的头格算，不是按被查的格子
+    return !!t && t[0] === x && t[1] === y;
+  }
+
+  // 该单位站在 (x,y) 时占的全部格子（可指定朝向）
+  function cellsAt(u, x, y, d) {
+    var out = [[x, y]], t = tailHex(u, x, y, d);
+    if (t) out.push(t);
+    return out;
+  }
+
+  function cellsOf(u) { return cellsAt(u, u.x, u.y, dirOf(u)); }
+
+  // 两个单位之间的最小格距（双格取所有格组合里最近的一对）
+  function unitDist(a, b) {
+    var ca = cellsOf(a), cb = cellsOf(b), best = 99;
+    for (var i = 0; i < ca.length; i++) {
+      for (var j = 0; j < cb.length; j++) {
+        var d = dist(ca[i][0], ca[i][1], cb[j][0], cb[j][1]);
+        if (d < best) best = d;
+      }
+    }
+    return best;
+  }
+
+  // 站在 (x,y) 时放得下吗？放得下返回朝向（-1/+1），否则 0。
+  // 单格单位也要在这里查岩石与占位：否则 BFS 会把别人身上当成可走的格子，
+  // 兵就会踩到 / 穿过友军与敌人身上（曾经真的发生了）。
+  // 双格单位两个方向都能放时优先 prefer（默认保持当前朝向）——这就是"原地扭头"。
+  function fitDir(u, x, y, ignore, prefer) {
+    if (x < 0 || x >= W || y < 0 || y >= H) return 0;
+    if (!isWide(u)) {
+      if (isRock(x, y)) return 0;
+      if (unitAt(x, y, ignore)) return 0;
+      return 1;
+    }
+    var p = (prefer === 1 || prefer === -1) ? prefer : dirOf(u);
+    var tries = [p, -p];
+    for (var t = 0; t < 2; t++) {
+      var d = tries[t], cells = cellsAt(u, x, y, d);
+      if (cells.length < 2) continue;                 // 尾巴会掉出边界
+      var ok = true;
+      for (var i = 0; i < cells.length && ok; i++) {
+        var cx = cells[i][0], cy = cells[i][1];
+        if (isRock(cx, cy)) { ok = false; break; }
+        if (unitAt(cx, cy, ignore)) ok = false;
+      }
+      if (ok) return d;
+    }
+    return 0;
+  }
+
+  // 双格单位能否站在 (x,y)：头尾都要在界内、不是岩石、没被别人占
+  function canStand(u, x, y, ignore) { return fitDir(u, x, y, ignore) !== 0; }
+
+  // 让"头"朝向目标：占的两格不变，只交换头尾（原版的"扭头"）。
+  // 例：龙占 (8,3)+(9,3)、头在 9，要打 (7,3) 时把头换成 8、尾巴换成 9。
+  function faceTarget(u, t) {
+    if (!isWide(u)) return;
+    var d = dirOf(u), ox = u.x + d;
+    if (ox < 0 || ox >= W) return;
+    var near = nearestCell({ x: u.x, y: u.y }, t);
+    if (!near) return;
+    if (dist(ox, u.y, near[0], near[1]) < dist(u.x, u.y, near[0], near[1])) {
+      u.x = ox; u.dir = -d;
+    }
+  }
+
+  // 站到 (x,y) 时尾巴想甩哪边：远离目标那侧（贴不着就保持原朝向）
+  function awayDir(u, x, y, t) {
+    var near = nearestCell({ x: x, y: y }, t);
+    if (!near) return dirOf(u);
+    if (x > near[0]) return 1;
+    if (x < near[0]) return -1;
+    return dirOf(u);
+  }
+
+  // 某一格到某个单位（双格取它身上更近的那一格）的距离
+  function cellToUnitDist(x, y, u) {
+    var cs = cellsOf(u), m = 99;
+    for (var i = 0; i < cs.length; i++) m = Math.min(m, dist(x, y, cs[i][0], cs[i][1]));
+    return m;
+  }
+
+  function nearestFoe(u) {
+    var foes = alive(u.side === "us" ? "them" : "us"), best = null, bd = 99;
+    for (var i = 0; i < foes.length; i++) {
+      var d = unitDist(u, foes[i]);
+      if (d < bd) { bd = d; best = foes[i]; }
+    }
+    return best;
+  }
+
+  /* 待机朝向（默认站位）：头永远朝着敌人，绝不允许把头扭到自己这一侧。
+     占的两格自始至终没变，变的只是哪一端算"头"——
+     两头距离相等（敌人在正上/正下）时保持现状，不白转。
+     出手时的转身是**临时**的：打完一手就回到这里重算（见 endActorSoon）。 */
+  function restFace(u) {
+    if (!u || u.dead || !isWide(u)) return;
+    var d = dirOf(u), tx = u.x + d;
+    if (tx < 0 || tx >= W) return;                 // 身子贴边，另一端不存在
+    if (isRock(tx, u.y) || unitAt(tx, u.y, u)) return;  // 另一端站不下，换不了头
+    var foe = nearestFoe(u);
+    if (!foe) return;                              // 场上没敌人：保持现状
+    if (cellToUnitDist(tx, u.y, foe) < cellToUnitDist(u.x, u.y, foe)) {
+      u.x = tx; u.dir = -d;                        // 换头：把靠敌的那端变成头
+    }
+  }
+
+  function faceAll() {
+    units.forEach(restFace);
+  }
+
+  // 目标身上离 from 最近 / 最远的那一格（龙息"打穿"要用最远端再往前一格）
+  function nearestCell(from, t) {
+    var cs = cellsOf(t), best = null, bd = 99;
+    for (var i = 0; i < cs.length; i++) {
+      var d = dist(from.x, from.y, cs[i][0], cs[i][1]);
+      if (d < bd) { bd = d; best = cs[i]; }
+    }
+    return best;
+  }
+
+  function farthestCell(from, t) {
+    var cs = cellsOf(t), best = null, bd = -1;
+    for (var i = 0; i < cs.length; i++) {
+      var d = dist(from.x, from.y, cs[i][0], cs[i][1]);
+      if (d > bd) { bd = d; best = cs[i]; }
+    }
+    return best;
+  }
+
+  function alive(side) {
+    return units.filter(function(u){ return !u.dead && (!side || u.side === side); });
+  }
+
+  function log(msg, cls) {
+    var box = document.getElementById("log");
+    var p = document.createElement("p");
+    if (cls) p.className = cls;
+    p.innerHTML = msg;
+    box.insertBefore(p, box.firstChild);
+    while (box.children.length > 60) box.removeChild(box.lastChild);
+  }
+
+  function makeUnits() {
+    return ROSTER.map(function(t){
+      var u = {};
+      for (var k in t) u[k] = t[k];
+      u.perHp = t.perHp;
+      u.shots = t.shots || 0;
+      u.maxShots = t.shots || 0;
+      u.maxHp = t.count * t.perHp;
+      u.hp = u.maxHp;
+      u.dead = false;
+      u.retaliated = false;
+      u.defending = false;
+      // 双格单位的尾巴在哪一侧：-1 左 / +1 右。默认"背对敌人"，
+      // 走路和出手时会按需要调头（见 fitDir / attackFace）
+      u.dir = (t.side === "us") ? -1 : 1;
+      u.el = null;
+      return u;
+    });
+  }
+
+  function startRound() {
+    order = alive().slice().sort(function(a, b){
+      if (b.speed !== a.speed) return b.speed - a.speed;
+      return a.side === "us" ? -1 : 1;
+    }).map(function(u){ return u.id; });
+    units.forEach(function(u){
+      u.retaliated = false;
+      u.defending = false;
+    });
+    log("—— 第 " + roundNo + " 回合 ——", "sys");
+    nextActor();
+  }
+
+  function current() {
+    if (!order || !order.length) return null;
+    var id = order[0];
+    for (var i = 0; i < units.length; i++) if (units[i].id === id) return units[i].dead ? null : units[i];
+    return null;
+  }
+
+  function nextActor() {
+    var guard = 0;
+    while (order.length && guard++ < 40) {
+      var u = current();
+      if (u) break;
+      order.shift();
+    }
+    if (!order.length) {
+      if (!alive("us").length || !alive("them").length) return finish();
+      roundNo++;
+      document.getElementById("roundNo").textContent = roundNo;
+      startRound();
+      return;
+    }
+    var act = current();
+    restFace(act);                       // 轮到这个单位：先把头摆向敌人（默认站位）
+    selected = null; hasMoved = false; moveMap = new Map(); atkSet = new Set();
+    pendingAttack = null; hoverUnit = null;
+    approachMode = null; chosenApproach = null; lastHoverId = null;
+    if (act.side === "us") {
+      selected = act;
+      computeOptions(act);
+      var st = "";
+      if (act.ranged) {
+        st = (act.shots || 0) === 0 ? "（弹药耗尽，只能近战）"
+           : inMelee(act) ? "（被贴身，只能近战）" : "（可射击）";
+      }
+      setHint("行动：" + act.name + " × " + act.count + " · 点蓝格移动，或点敌人挑选进攻位置" +
+        (act.breath ? "（龙息会打穿目标）" : "") + st);
+    } else {
+      setHint("敌方 " + act.name + " 行动中…");
+      setTimeout(function(){ aiAct(act); }, 480);
+    }
+    render();
+  }
+
+  function setHint(s) { document.getElementById("hint").textContent = s; }
+
+  function endActor() {
+    if (order.length) order.shift();
+    nextActor();
+  }
+
+  // 一次行动只推进一次：自动结束与玩家点击可能同时触发，用标志去重
+  var settling = false;
+  function endActorSoon(delay) {
+    if (settling) return;
+    settling = true;
+    setTimeout(function(){
+      settling = false;
+      // 出手时那个扭头是临时的：这一手结束就回到待机姿态（头朝敌人）
+      restFace(current());
+      endActor();
+    }, delay || 0);
+  }
+
+  function computeOptions(u) {
+    moveMap = new Map(); atkSet = new Set();
+    if (!u || u.dead) return;
+    var budget = u.speed;
+    var startK = key(u.x, u.y);
+    moveMap.set(startK, 0);
+    var frontier = [[u.x, u.y, 0]];
+    while (frontier.length) {
+      var cur = frontier.shift();
+      if (cur[2] >= budget) continue;
+      var nb = neighbors(cur[0], cur[1]);
+      for (var i = 0; i < nb.length; i++) {
+        var nx = nb[i][0], ny = nb[i][1], k = key(nx, ny);
+        if (moveMap.has(k)) continue;
+        // 双格要整个身子都放得下：头格 + 尾巴格
+        if (!canStand(u, nx, ny, u)) continue;
+        moveMap.set(k, cur[2] + 1);
+        frontier.push([nx, ny, cur[2] + 1]);
+      }
+    }
+    var R = attackReach(u);
+    var canShoot = canShootNow(u);        // 有弹药 + 没被贴身 + 本回合没移动
+    units.forEach(function(e){
+      if (e.dead || e.side === u.side) return;
+      if (canShoot) { atkSet.add(key(e.x, e.y)); return; }
+      if (unitDist(u, e) <= R) { atkSet.add(key(e.x, e.y)); return; }
+      // 能否走到目标任意一格的外圈
+      var ring = {};
+      cellsOf(e).forEach(function(c){
+        neighbors(c[0], c[1]).forEach(function(nb){
+          ring[key(nb[0], nb[1])] = 1;
+        });
+      });
+      cellsOf(e).forEach(function(c){ delete ring[key(c[0], c[1])]; });
+      for (var k in ring) {
+        if (moveMap.has(k)) { atkSet.add(key(e.x, e.y)); break; }
+      }
+    });
+  }
+
+  function effDef(u) {
+    return u.defending ? u.def * 1.3 : u.def;
+  }
+
+  function calcDamage(a, d, joustHexes) {
+    var avg = (a.dmg[0] + a.dmg[1]) / 2;
+    var base = a.count * avg;
+    if (a.joust && joustHexes) base *= (1 + 0.05 * joustHexes);
+    var diff = a.att - effDef(d);
+    var mult = diff >= 0 ? Math.min(3, 1 + 0.05 * diff) : Math.max(0.3, 1 - 0.025 * (-diff));
+    return { min: Math.round(base * Math.max(0.3, mult * 0.85)), max: Math.round(base * mult), avg: base * mult };
+  }
+
+  function applyDamage(target, amount) {
+    target.hp -= amount;
+    if (target.hp <= 0) {
+      target.hp = 0;
+      target.dead = true;
+      target.count = 0;
+    } else {
+      target.count = Math.ceil(target.hp / target.perHp);
+    }
+  }
+
+  function floatText(x, y, txt, cls, big, delay, dy) {
+    var run = function(){
+      var c = center(x, y);
+      var t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", c.cx);
+      t.setAttribute("y", c.cy - 18 + (dy || 0));
+      t.setAttribute("class", "floater " + cls + (big ? " big" : ""));
+      t.textContent = txt;
+      gFx.appendChild(t);
+      setTimeout(function(){ if (t.parentNode) t.parentNode.removeChild(t); }, 980);
+    };
+    if (delay) setTimeout(run, delay); else run();
+  }
+
+  // ══════════════ 攻击特效 ══════════════
+  // 原则：状态结算同步（不影响判定与测试），画面按「命中帧」呈现。
+  // 全部手搓 SVG + setTimeout 补间，不依赖 CSS transform-box / SMIL / rAF。
+  var FX_ON = true;
+
+  function fxLayer() {
+    var g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "fx");
+    gFx.appendChild(g);
+    return g;
+  }
+
+  function fxDrop(el, ms) {
+    setTimeout(function(){ if (el && el.parentNode) el.parentNode.removeChild(el); }, ms || 0);
+  }
+
+  // 极简补间：k 从 0 到 1
+  function tween(ms, step, done) {
+    var t0 = Date.now();
+    (function frame(){
+      var k = Math.min(1, (Date.now() - t0) / ms);
+      step(k);
+      if (k < 1) setTimeout(frame, 16);
+      else if (done) done();
+    })();
+  }
+
+  function fxEl(tag, attrs, cls) {
+    var e = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) if (attrs.hasOwnProperty(k)) e.setAttribute(k, attrs[k]);
+    if (cls) e.setAttribute("class", cls);
+    return e;
+  }
+
+  // 出手：攻击者朝目标方向「顶一下」再弹回（不改外层坐标，走 inner 组）
+  function fxLunge(u, tx, ty, shooting) {
+    if (!FX_ON || !u || !u.inner) return;
+    if (shooting === undefined) shooting = !!u.ranged;
+    var dx = tx - u.x, dy = ty - u.y;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var amp = shooting ? 3 : 9;
+    var nx = dx / len * amp, ny = dy / len * amp;
+    tween(shooting ? 200 : 280, function(k){
+      var s = Math.sin(Math.PI * k);                 // 0 → 1 → 0
+      u.inner.setAttribute("transform",
+        "translate(" + (nx * s).toFixed(2) + "," + (ny * s).toFixed(2) + ")");
+    }, function(){
+      if (u.inner) u.inner.setAttribute("transform", "translate(0,0)");
+    });
+  }
+
+  // 近战：两道弧光（外层暖光 + 内层白刃）+ 放射火花
+  function fxSlash(x, y, ang, tint) {
+    if (!FX_ON) return;
+    var c = center(x, y), g = fxLayer();
+    g.setAttribute("transform", "translate(" + c.cx + "," + c.cy + ")");
+
+    var rot = fxEl("g", { transform: "rotate(" + ang + ")" });
+    g.appendChild(rot);
+
+    var glow = fxEl("path", { d: "M -21 -10 Q 0 22 21 -10", class: "fx-arc",
+      stroke: tint || "#ffe6a8", "stroke-width": "6", opacity: ".5" }, "fx-arc");
+    glow.setAttribute("style", "filter:blur(1.7px)");
+    rot.appendChild(glow);
+
+    var edge = fxEl("path", { d: "M -18 -8 Q 0 18 18 -8",
+      stroke: "#ffffff", "stroke-width": "2.2" }, "fx-arc");
+    edge.setAttribute("style", "animation-delay:30ms");
+    rot.appendChild(edge);
+
+    for (var i = 0; i < 6; i++) {
+      var a = Math.PI * 2 * (i / 6) + 0.3;
+      var r0 = 9 + Math.random() * 4, r1 = r0 + 6 + Math.random() * 8;
+      var ln = fxEl("line", {
+        x1: (Math.cos(a) * r0).toFixed(1), y1: (Math.sin(a) * r0).toFixed(1),
+        x2: (Math.cos(a) * r1).toFixed(1), y2: (Math.sin(a) * r1).toFixed(1),
+        stroke: tint || "#ffcf7d", "stroke-width": "1.7"
+      }, "fx-spark");
+      ln.setAttribute("style", "animation-delay:" + (i * 18) + "ms");
+      g.appendChild(ln);
+    }
+    fxDrop(g, 430);
+  }
+
+  // 命中：扩散环 + 中心光晕
+  function fxBurst(x, y, color, scale) {
+    if (!FX_ON) return;
+    var c = center(x, y), g = fxLayer(), s = scale || 1;
+
+    var halo = fxEl("circle", { cx: c.cx, cy: c.cy, r: "0", fill: "url(#fxGlow)" });
+    g.appendChild(halo);
+
+    var ring = fxEl("circle", { cx: c.cx, cy: c.cy, r: "6", fill: "none",
+      stroke: color || "#fff1cf", "stroke-width": "2.8" });
+    g.appendChild(ring);
+
+    tween(300, function(k){
+      halo.setAttribute("r", (4 + 22 * s * k).toFixed(1));
+      halo.setAttribute("opacity", (k < 0.3 ? k / 0.3 : 1 - (k - 0.3) / 0.7).toFixed(2));
+      ring.setAttribute("r", (6 + 24 * s * k).toFixed(1));
+      ring.setAttribute("opacity", (1 - k).toFixed(2));
+      ring.setAttribute("stroke-width", (2.8 - 2 * k).toFixed(2));
+    }, function(){ fxDrop(g, 0); });
+  }
+
+  // 远程：抛物线箭矢 + 尾迹
+  function fxProjectile(a, d) {
+    if (!FX_ON) return;
+    var p0 = center(a.x, a.y), p1 = center(d.x, d.y);
+    var ang = Math.atan2(p1.cy - p0.cy, p1.cx - p0.cx) * 180 / Math.PI;
+    var g = fxLayer();
+
+    var arrow = fxEl("g", {});
+    arrow.appendChild(fxEl("line", { x1: "-12", y1: "0", x2: "3", y2: "0",
+      stroke: "#7a5a34", "stroke-width": "2.2" }, ""));
+    arrow.appendChild(fxEl("path", { d: "M3 -3.6 L11 0 L3 3.6 Z",
+      fill: "#e8e2cd", stroke: "#8a7a55", "stroke-width": ".8" }));
+    arrow.appendChild(fxEl("path", { d: "M-12 0 L-15.5 -3.2 M-12 0 L-15.5 3.2",
+      fill: "none", stroke: "#8a7a55", "stroke-width": "1.5" }));
+    arrow.setAttribute("transform", "translate(" + p0.cx + "," + p0.cy + ") rotate(" + ang.toFixed(1) + ")");
+    g.appendChild(arrow);
+
+    var trail = fxEl("line", { x1: p0.cx, y1: p0.cy, x2: p0.cx, y2: p0.cy,
+      stroke: "#b9a98a", "stroke-width": "1.4", opacity: ".5" }, "fx-trail");
+    g.insertBefore(trail, arrow);
+
+    tween(250, function(k){
+      var cx = p0.cx + (p1.cx - p0.cx) * k;
+      var cy = p0.cy + (p1.cy - p0.cy) * k - Math.sin(Math.PI * k) * 16;
+      arrow.setAttribute("transform",
+        "translate(" + cx.toFixed(1) + "," + cy.toFixed(1) + ") rotate(" + ang.toFixed(1) + ")");
+      trail.setAttribute("x2", cx.toFixed(1));
+      trail.setAttribute("y2", cy.toFixed(1));
+    }, function(){ fxDrop(g, 0); });
+  }
+
+  // 龙息：从攻击者张开的锥形火舌，覆盖「目标格 + 身后格」
+  function fxBreath(from, hex) {
+    if (!FX_ON || !from || !hex) return;
+    var p0 = center(from.x, from.y), p1 = center(hex[0], hex[1]);
+    var dx = p1.cx - p0.cx, dy = p1.cy - p0.cy;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ang = Math.atan2(dy, dx) * 180 / Math.PI;
+    var g = fxLayer();
+
+    // 锥体：起手窄、末端宽
+    var body = fxEl("path", {
+      d: "M 14 -6 L " + (len + 8).toFixed(1) + " -20 L " + (len + 14).toFixed(1) + " 0 " +
+         "L " + (len + 8).toFixed(1) + " 20 L 14 6 Z",
+      fill: "url(#fxFire)"
+    });
+    g.appendChild(body);
+
+    // 中轴亮芯
+    var core = fxEl("line", { x1: "10", y1: "0", x2: (len + 6).toFixed(1), y2: "0",
+      stroke: "#fffdf2", "stroke-width": "3", opacity: ".85",
+      "stroke-linecap": "round" });
+    g.appendChild(core);
+
+    // 火焰团块：沿轴线抖动
+    var blobs = [];
+    for (var i = 0; i < 5; i++) {
+      var b = fxEl("circle", { cx: "0", cy: "0", r: "4", fill: "#ffd06a", opacity: ".9" });
+      g.appendChild(b);
+      blobs.push(b);
+    }
+
+    var base = "translate(" + p0.cx + "," + p0.cy + ") rotate(" + ang.toFixed(1) + ")";
+    tween(560, function(k){
+      var open = Math.min(1, k / 0.22);                       // 快速张开
+      var fade = k < 0.2 ? 1 : 1 - (k - 0.2) / 0.8;
+      var sy = (0.55 + 0.45 * open) * (1 + 0.1 * Math.sin(k * Math.PI * 4));
+      g.setAttribute("transform", base + " scale(1," + sy.toFixed(3) + ")");
+      g.setAttribute("opacity", Math.max(0, fade).toFixed(2));
+
+      for (var j = 0; j < blobs.length; j++) {
+        var ph = (k * 2.2 + j * 0.19) % 1;
+        var bx = 12 + ph * (len + 6);
+        var by = Math.sin(k * 22 + j * 2.1) * (2 + ph * 11);
+        blobs[j].setAttribute("cx", bx.toFixed(1));
+        blobs[j].setAttribute("cy", by.toFixed(1));
+        blobs[j].setAttribute("r", (2.2 + ph * 4.4).toFixed(1));
+        blobs[j].setAttribute("opacity", ((1 - ph) * 0.75).toFixed(2));
+      }
+    }, function(){ fxDrop(g, 0); });
+  }
+
+  // 阵亡：碎片四散 + 收缩环
+  function fxDeath(x, y, side) {
+    if (!FX_ON) return;
+    var c = center(x, y), color = side === "us" ? "#2f6fb5" : "#b34a3f", g = fxLayer();
+    for (var i = 0; i < 7; i++) {
+      (function(i){
+        var a = Math.PI * 2 * (i / 7) + Math.random() * 0.5;
+        var d0 = 2 + Math.random() * 6, r = 1.5 + Math.random() * 2.2;
+        var dot = fxEl("circle", { cx: c.cx, cy: c.cy, r: r.toFixed(1), fill: color });
+        g.appendChild(dot);
+        tween(430, function(k){
+          dot.setAttribute("cx", (c.cx + Math.cos(a) * (d0 + 20 * k)).toFixed(1));
+          dot.setAttribute("cy", (c.cy + Math.sin(a) * (d0 + 20 * k) + 9 * k * k).toFixed(1));
+          dot.setAttribute("opacity", (1 - k).toFixed(2));
+        });
+      })(i);
+    }
+    fxDrop(g, 470);
+    fxBurst(x, y, color, 0.8);
+  }
+
+  function fxShake() {
+    if (!FX_ON) return;
+    var f = document.getElementById("field");
+    if (!f || !f.classList) return;
+    f.classList.remove("shake");
+    void f.offsetWidth;
+    f.classList.add("shake");
+    setTimeout(function(){ f.classList.remove("shake"); }, 300);
+  }
+
+
+  function pathCostTo(x, y) {
+    var k = key(x, y);
+    return moveMap.has(k) ? moveMap.get(k) : null;
+  }
+
+  // 走位路径（BFS 带父指针）：只用于动画，能不能走仍由 moveMap 决定
+  // 双格单位每一步都要保证整个身子放得下（canStand）
+  function bfsPath(u, gx, gy) {
+    var sx = u.x, sy = u.y;
+    var startK = key(sx, sy), goalK = key(gx, gy);
+    var prev = {}; prev[startK] = null;
+    var q = [[sx, sy]];
+    while (q.length) {
+      var cur = q.shift();
+      if (key(cur[0], cur[1]) === goalK) break;
+      var nb = neighbors(cur[0], cur[1]);
+      for (var i = 0; i < nb.length; i++) {
+        var nx = nb[i][0], ny = nb[i][1], k = key(nx, ny);
+        if (prev.hasOwnProperty(k)) continue;
+        if (!canStand(u, nx, ny, u)) continue;
+        prev[k] = key(cur[0], cur[1]);
+        q.push([nx, ny]);
+      }
+    }
+    if (!prev.hasOwnProperty(goalK)) return null;
+    var path = [], k2 = goalK;
+    while (k2 && k2 !== startK) {
+      var p = k2.split(",");
+      path.unshift([+p[0], +p[1]]);
+      k2 = prev[k2];
+    }
+    return path;
+  }
+
+  // 一格一格走过去，走到了才回调（攻击必须等走完）
+  function walkTo(u, spot, done) {
+    if (!spot || (spot.x === u.x && spot.y === u.y)) { if (done) done(); return; }
+    var path = bfsPath(u, spot.x, spot.y);
+    if (!path || !path.length) { if (done) done(); return; }
+    if (stepDelay === 0) {                       // 同步走完，便于测试与重放
+      for (var j = 0; j < path.length; j++) {
+        u.x = path[j][0]; u.y = path[j][1];
+        u.dir = fitDir(u, u.x, u.y, u) || dirOf(u);
+      }
+      restFace(u);                               // 落地即摆正：头朝敌人
+      render();
+      if (done) done();
+      return;
+    }
+    busy = true;
+    var i = 0;
+    render();
+    (function tick(){
+      if (i >= path.length) {
+        busy = false;
+        restFace(u);                             // 落地即摆正：头朝敌人
+        render();
+        if (done) done();
+        return;
+      }
+      u.x = path[i][0]; u.y = path[i][1];
+      u.dir = fitDir(u, u.x, u.y, u) || dirOf(u);
+      i++;
+      render();
+      setTimeout(tick, stepDelay);
+    })();
+  }
+
+  function doAttack(a, d, steps, shooting) {
+    // 兼容直接调用（测试/重放）：没显式说明射击与否，就按"远程且有弹药"推断
+    if (shooting === undefined) shooting = !!a.ranged && (a.shots || 0) > 0;
+    // 出手前把头扭向目标：占位不变，只是换哪一格当"头"
+    if (!shooting) faceTarget(a, d);
+    var from = { x: a.x, y: a.y, dir: dirOf(a) };
+    var bt = breathInfo(a, from, d, steps || 0);
+    var roll = calcDamage(a, d, steps || 0);
+    var amount = Math.round(roll.min + Math.random() * (roll.max - roll.min));
+    var before = d.count;
+    var melee = !shooting;
+    var hitAt = melee ? 150 : 250;                                   // 视觉命中帧
+    var ang = Math.atan2(d.y - a.y, d.x - a.x) * 180 / Math.PI;
+    var tint = a.side === "us" ? "#ffe6a8" : "#ffd2c8";
+    var heavy = amount >= d.maxHp * 0.2;                              // 大字伤害
+    var quake = amount >= d.maxHp * 0.35;                             // 震屏（更克制）
+
+    // 出手：先给动作，伤害落点延到命中帧
+    fxLunge(a, d.x, d.y, shooting);
+    if (shooting) {
+      a.shots = Math.max(0, (a.shots || 0) - 1);
+      fxProjectile(a, d);
+    }
+    if (bt && bt.unit) fxBreath(from, bt.hex);
+
+    applyDamage(d, amount);
+    log("<b>" + a.name + "</b> 攻击 <b>" + d.name + "</b> · 造成 " + amount +
+        " 伤害，击杀 " + (before - d.count) + "（剩 " + d.count + "）", a.side);
+
+    setTimeout(function(){
+      if (melee) fxSlash(d.x, d.y, ang + 90, tint);
+      fxBurst(d.x, d.y, a.side === "us" ? "#8fb6dd" : "#e09184", melee ? 1 : 0.85);
+      animateHit(d);
+      floatText(d.x, d.y, "-" + amount, d.side === "us" ? "them" : "us", heavy);
+      if (before - d.count >= 3) {
+        floatText(d.x, d.y, "击杀 " + (before - d.count), "kill", false, 200, 28);
+      }
+      if (quake) fxShake();
+    }, hitAt);
+
+    // 龙息：目标身后那格一起烧，不额外反击；原版连友军也照打
+    if (bt && bt.unit) {
+      var bu = bt.unit;
+      var bAmt = Math.round(bt.r.min + Math.random() * (bt.r.max - bt.r.min));
+      var bBefore = bu.count, bFriend = bu.side === a.side;
+      applyDamage(bu, bAmt);
+      log("<b>龙息</b> 波及 <b>" + bu.name + "</b> · 造成 " + bAmt + " 伤害，击杀 " +
+          (bBefore - bu.count) + (bFriend ? "（友军，龙息不辨敌我）" : ""), a.side);
+      setTimeout(function(){
+        fxBurst(bu.x, bu.y, "#e08a3c", 0.9);
+        animateHit(bu);
+        floatText(bu.x, bu.y, "-" + bAmt, bu.side === "us" ? "them" : "us",
+          bAmt >= bu.maxHp * 0.2);
+      }, hitAt + 70);
+      if (bu.dead) {
+        log("<b>" + bu.name + "</b> 被消灭", "sys");
+        setTimeout(function(){ removeUnitEl(bu); }, hitAt + 120);
+      }
+    }
+
+    if (d.dead) {
+      log("<b>" + d.name + "</b> 被消灭", "sys");
+      setTimeout(function(){ removeUnitEl(d); }, hitAt + 60);
+      checkEnd();
+      return;
+    }
+    if (!shooting && !d.retaliated && unitDist(a, d) === 1) {
+      d.retaliated = true;
+      var back = calcDamage(d, a, 0);
+      var bAmt = Math.round(back.min + Math.random() * (back.max - back.min));
+      var bBefore = a.count;
+      var backAng = Math.atan2(a.y - d.y, a.x - d.x) * 180 / Math.PI;
+      applyDamage(a, bAmt);
+      setTimeout(function(){
+        fxLunge(d, a.x, a.y);
+        fxSlash(a.x, a.y, backAng + 90, "#ffc9c0");
+        fxBurst(a.x, a.y, "#d98b7c", 0.9);
+        floatText(a.x, a.y, "-" + bAmt, a.side === "us" ? "them" : "us", bAmt >= a.maxHp * 0.2);
+        animateHit(a);
+        log("<b>" + d.name + "</b> 反击 · 造成 " + bAmt + " 伤害，击杀 " + (bBefore - a.count), d.side);
+        if (a.dead) { log("<b>" + a.name + "</b> 被消灭", "sys"); removeUnitEl(a); }
+        render(); checkEnd();
+      }, 300);
+    }
+  }
+
+  function animateHit(u) {
+    if (!u.el) return;
+    u.el.classList.remove("hitanim");
+    void u.el.offsetWidth;
+    u.el.classList.add("hitanim");
+    setTimeout(function(){ if (u.el) u.el.classList.remove("hitanim"); }, 220);
+  }
+
+  function onHexClick(ev) {
+    var x = +ev.currentTarget.dataset.x, y = +ev.currentTarget.dataset.y;
+    var act = current();
+    if (!act || over || busy) return;
+
+    // H3 的节奏：一个单位一次动作。点空地走完就交棒，点敌人打完也交棒，
+    // 不存在"走完再补一刀"这种原版没有的第二动作。
+    // 所以动作一旦用掉，这里不再接受任何点击（含"点敌人反悔"）。
+    if (hasMoved) {
+      setHint(act.name + " 本回合已行动完毕，正在等待下一个单位");
+      return;
+    }
+
+    var target = unitAt(x, y);
+
+    if (target && target.side === act.side) {
+      if (target === act) {
+        // 选位阶段点自己 = 就站原地打（双格则是"原地扭头"那端）
+        if (approachMode && approachMode.target && !approachMode.target.dead) {
+          var sp0 = selfSpot(act, approachMode.target, attackReach(act));
+          if (sp0) { doPlayerAttack(act, approachMode.target, sp0); return; }
+        }
+        // 点自己（含双格的另一半身子）= 只是选中自己，不再手动"转身"。
+        // 朝向是自动的：待机时头朝敌人；出手时临时扭头，打完立刻摆回来。
+        selected = act; computeOptions(act); render();
+      }
+      return;
+    }
+
+    if (target && target.side !== act.side) {
+      if (!selected || selected !== act) return;
+      // 触屏待确认：再点同一目标 = 确认出手（此时还没移动，不能走 atkSet 检查）
+      if (pendingAttack && pendingAttack.target === target) {
+        performAttack(act, target, pendingAttack.spot);
+        return;
+      }
+      // atkSet 记的是头格；双格目标点它的尾巴格也算同一个目标
+      if (!atkSet.has(key(target.x, target.y))) {
+        var why = "";
+        if (act.ranged) {
+          if ((act.shots || 0) === 0) why = "（弹药耗尽，只能近战）";
+          else if (inMelee(act)) why = "（被贴身，只能近战）";
+        }
+        setHint(target.name + " · 距离 " + unitDist(act, target) + " 格" + why + " —— 打不到");
+        log("目标超出本回合行动范围", "sys");
+        render();
+        return;
+      }
+      // 站位是关键：不管贴不贴身，点敌人一律先展开"从哪一格打"。
+      // 只有"只有一种打法且不用挪窝"（远程站桩、四面被围）才省掉这一步。
+      var opts = approachOptions(act, target);
+      if (!opts.length) {
+        approachMode = null; chosenApproach = null;
+        setHint("没有能落脚的位置，打不到 " + target.name);
+        renderPreview();
+        return;
+      }
+      // 龙息例外：原地也是一种站位，得先把方向画出来再让玩家决定
+      if (opts.length === 1 && opts[0].cost === 0 && !act.breath) {
+        doPlayerAttack(act, target, opts[0]);
+        return;
+      }
+      // 再点一次同一个敌人 = 用当前选中的位置（默认原地那格）出手
+      if (approachMode && approachMode.target === target) {
+        doPlayerAttack(act, target, pickSpot(opts));
+      } else {
+        approachMode = { target: target };
+        chosenApproach = null;
+        hoverUnit = target;
+        render();
+        setHint(approachHint(act, target));
+      }
+      return;
+    }
+
+    if (!selected || selected !== act) return;
+
+    // 选位置阶段：点任意候选格 = 从那一格发起攻击
+    if (approachMode && approachMode.target && !approachMode.target.dead) {
+      var spots = approachOptions(act, approachMode.target);
+      for (var i = 0; i < spots.length; i++) {
+        if (spots[i].x === x && spots[i].y === y) {
+          chosenApproach = key(x, y);
+          doPlayerAttack(act, approachMode.target, spots[i]);
+          return;
+        }
+      }
+      approachMode = null;
+      chosenApproach = null;
+    }
+
+    pendingAttack = null;
+    var cost = pathCostTo(x, y);
+    if (cost === null) {
+      setHint("走不到 (" + x + "," + y + ") · 本回合最多 " + act.speed +
+        " 格（或被单位/岩石挡住）");
+      return;
+    }
+    if (cost === 0) return;
+    walkTo(act, { x: x, y: y }, function(){
+      // 点空地 = 纯移动，走到就结束 —— 不再挂攻击态、不再等第二次确认
+      hasMoved = true;
+      selected = act;
+      computeOptions(act);
+      moveMap = new Map([[key(act.x, act.y), 0]]);
+      atkSet = new Set();      // 动作已用掉，"还能打谁"这个概念在此刻作废
+      hoverUnit = null;
+      render();
+      log("<b>" + act.name + "</b> 移动到 (" + act.x + "," + act.y + ") · 行动结束", "sys");
+      setHint("已移动 " + cost + " 步到 (" + act.x + "," + act.y + ") · 行动结束");
+      endActorSoon(700);
+    });
+  }
+
+  // 悬停空地：只预告"走几步"，并说清点空地就是纯移动、不附带攻击
+  // （想"走过去打"必须点敌人，那是另一个入口 —— 两边不混）
+  function hoverGround(act, x, y) {
+    if (hasMoved) return;
+    if (unitAt(x, y)) return;
+    var c = moveMap.get(key(x, y));
+    if (c === undefined || c === 0) return;
+    // 双格单位到位后可以扭头，两格都算得上看有没有贴到敌人
+    var adjFoe = (isWide(act) ? [-1, 1] : [null]).some(function(fd){
+      return cellsAt(act, x, y, fd === null ? undefined : fd).some(function(cell){
+        return neighbors(cell[0], cell[1]).some(function(n){
+          var u = unitAt(n[0], n[1]);
+          return u && !u.dead && u.side !== act.side;
+        });
+      });
+    });
+    setHint("走到 (" + x + "," + y + ")：" + c + " 步 / 本轮可走 " + act.speed + " 步" +
+      (adjFoe ? " · 只移动，不攻击（想打它请直接点敌人）" : " · 移动后行动结束"));
+  }
+
+  // 鼠标扫到六边形：如果它是候选落脚格，就切到这一格
+  function onHexHover(x, y) {
+    if (over) return;
+    var act = current();
+    if (!act) return;
+    if (hasMoved) return;           // 动作已用掉，这一手马上交棒，别再出预览
+    // 扫过空地不该把已挂上的预览清掉
+    if (!unitAt(x, y)) hoverUnit = null;
+    var t = (approachMode && approachMode.target) ? approachMode.target : hoverUnit;
+    if (!t || t.dead || t.side === act.side) { hoverGround(act, x, y); return; }
+    var opts = approachOptions(act, t);
+    for (var i = 0; i < opts.length; i++) {
+      if (opts[i].x === x && opts[i].y === y) {
+        var k = key(x, y);
+        if (!approachMode) hoverUnit = t;
+        if (chosenApproach !== k) {
+          chosenApproach = k;
+          renderPreview();
+          setHint(approachHint(act, t));
+        }
+        return;
+      }
+    }
+  }
+
+  function approachHint(act, t) {
+    var opts = approachOptions(act, t);
+    if (!opts.length) return "没有可用的落脚格";
+    var sp = pickSpot(opts);
+    var pv = damagePreview(act, t, sp);
+    if (opts.length === 1) {
+      return "点击 " + t.name + " 由 (" + sp.x + "," + sp.y + ") 发起攻击 · 预计 " +
+        pv.r.min + "–" + pv.r.max + (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "");
+    }
+    return t.name + " × " + t.count + " · " + opts.length + " 个位置可选 · 当前 (" +
+      sp.x + "," + sp.y + ") " + sp.cost + " 步 → 伤害 " + pv.r.min + "–" + pv.r.max +
+      (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "") +
+      breathText(pv, act) +
+      (lastPT === "touch" ? " · 点一个格子从此处出手" : " · 扫格子比较，点格子直接出手");
+  }
+
+  function doPlayerAttack(act, target, spot) {
+    approachMode = null;
+    if (lastPT === "touch" && !(pendingAttack && pendingAttack.target === target)) {
+      pendingAttack = { target: target, actId: act.id, spot: spot || null };
+      hoverUnit = target;
+      render();
+      updateConfirmBar();
+      return;
+    }
+    performAttack(act, target, spot);
+  }
+
+  function aiAct(u) {
+    if (over || u.dead) return;
+    computeOptions(u);
+    var foes = alive(u.side === "us" ? "them" : "us");
+    if (!foes.length) return finish();
+
+    var best = null;
+    var aiCanShoot = canShootNow(u);
+    foes.forEach(function(f){
+      if (!atkSet.has(key(f.x, f.y))) return;
+      var steps = 0, tx = u.x, ty = u.y;
+      if (!aiCanShoot && unitDist(u, f) !== 1) {
+        var nb = [], seen2 = {};
+        cellsOf(f).forEach(function(c){
+          neighbors(c[0], c[1]).forEach(function(n){
+            var k = key(n[0], n[1]);
+            if (seen2[k]) return;
+            seen2[k] = 1;
+            if (coversHex(f, n[0], n[1])) return;
+            nb.push(n);
+          });
+        });
+        var bc = null;
+        for (var i = 0; i < nb.length; i++) {
+          var c = pathCostTo(nb[i][0], nb[i][1]);
+          if (c !== null && (bc === null || c < bc[0])) bc = [c, nb[i][0], nb[i][1]];
+        }
+        if (!bc) return;
+        tx = bc[1]; ty = bc[2]; steps = bc[0];
+      }
+      var est = calcDamage(u, f, steps).avg;
+      if (!best || est > best.est) best = { f: f, est: est, tx: tx, ty: ty, steps: steps };
+    });
+
+    if (best) {
+      // 原地不动才可能射击；一旦走位就只能是近战（弓手规则）
+      var willShoot = aiCanShoot && best.steps === 0;
+      walkTo(u, (best.tx === u.x && best.ty === u.y) ? null : { x: best.tx, y: best.ty }, function(){
+        doAttack(u, best.f, best.steps, willShoot);
+        render();
+        if (!over) endActorSoon(620);
+      });
+      return;
+    }
+
+    var dest = null, bestScore = Infinity;
+    var allFoes = alive(u.side === "us" ? "them" : "us");
+    moveMap.forEach(function(c, k){
+      if (c === 0) return;
+      var p = k.split(","), px = +p[0], py = +p[1], dmin = Infinity;
+      for (var i = 0; i < allFoes.length; i++) {
+        var cs = cellsOf(allFoes[i]);            // 双格单位取两格里更近的那格
+        for (var j = 0; j < cs.length; j++) {
+          var dd = dist(px, py, cs[j][0], cs[j][1]);
+          if (dd < dmin) dmin = dd;
+        }
+      }
+      var score = dmin - c * 0.001;
+      if (score < bestScore) { bestScore = score; dest = k; }
+    });
+    if (dest) {
+      var p = dest.split(",");
+      walkTo(u, { x: +p[0], y: +p[1] }, function(){
+        log("<b>" + u.name + "</b> 向 (" + u.x + "," + u.y + ")", u.side);
+        render();
+        endActorSoon(620);
+      });
+      return;
+    }
+    log("<b>" + u.name + "</b> 按兵不动", u.side);
+    endActorSoon(620);
+  }
+
+  function checkEnd() {
+    if (over) return;
+    if (!alive("them").length) finish("us");
+    else if (!alive("us").length) finish("them");
+  }
+
+  function finish(winner) {
+    if (over) return;
+    if (!winner) winner = alive("us").length ? "us" : "them";
+    over = winner;
+    var box = document.getElementById("field");
+    var d = document.createElement("div");
+    d.className = "over";
+    d.innerHTML = "<h2>" + (winner === "us" ? "战斗胜利" : "战斗失败") + "</h2>" +
+      "<p>共 " + roundNo + " 回合 · 我军伤亡 " +
+      Math.round(100 - 100 * alive("us").reduce(function(s,u){return s+u.hp;},0) /
+      Math.max(1, units.filter(function(u){return u.side==="us";}).reduce(function(s,u){return s+u.maxHp;},0))) + "%</p>" +
+      "<button class=\"primary\" id=\"again\">再来一场</button>";
+    box.appendChild(d);
+    document.getElementById("again").addEventListener("click", init);
+    document.getElementById("btnDefend").disabled = true;
+    document.getElementById("btnWait").disabled = true;
+    pendingAttack = null;
+    hoverUnit = null;
+    render();
+  }
+
+  function removeUnitEl(u) {
+    fxDeath(u.x, u.y, u.side);
+    if (u.el && u.el.parentNode) {
+      u.el.classList.add("deadanim");
+      var el2 = u.el;
+      setTimeout(function(){ if (el2.parentNode) el2.parentNode.removeChild(el2); }, 400);
+    }
+  }
+
+  function ensureUnitEl(u) {
+    if (u.el) return;
+    var g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("class", "unit " + u.side);
+    // 内层组专供出手位移（外层 transform 由 render 用来定位）
+    var inner = document.createElementNS(SVGNS, "g");
+    inner.setAttribute("class", "inner");
+    g.appendChild(inner);
+
+    // 双格单位：身体是横跨两格的胶囊，中心落在两格中点（头格 ± 半格）
+    var wide = isWide(u);
+    var off = wide ? dirOf(u) * (HEXW / 2) : 0;
+    var bw = wide ? (HEXW + 30) : 30;
+
+    var body;
+    if (wide) {
+      body = document.createElementNS(SVGNS, "rect");
+      body.setAttribute("x", String(off - bw / 2));
+      body.setAttribute("y", "-15");
+      body.setAttribute("width", String(bw));
+      body.setAttribute("height", "30");
+      body.setAttribute("rx", "15");
+    } else {
+      body = document.createElementNS(SVGNS, "circle");
+      body.setAttribute("r", "15");
+    }
+    body.setAttribute("class", "body");
+    inner.appendChild(body);
+
+    var gl = document.createElementNS(SVGNS, "text");
+    gl.setAttribute("class", "glyph");
+    gl.setAttribute("x", String(off));
+    gl.setAttribute("y", "-1");
+    gl.textContent = u.glyph;
+    inner.appendChild(gl);
+
+    var badge = document.createElementNS(SVGNS, "rect");
+    badge.setAttribute("class", "badge");
+    badge.setAttribute("x", String(off + 7)); badge.setAttribute("y", "6");
+    badge.setAttribute("width", "19"); badge.setAttribute("height", "13");
+    badge.setAttribute("rx", "5");
+    inner.appendChild(badge);
+
+    var cnt = document.createElementNS(SVGNS, "text");
+    cnt.setAttribute("class", "cnt");
+    cnt.setAttribute("x", String(off + 16.5)); cnt.setAttribute("y", "12.8");
+    inner.appendChild(cnt);
+
+    var hpbg = document.createElementNS(SVGNS, "rect");
+    hpbg.setAttribute("class", "hpbg");
+    hpbg.setAttribute("x", String(off - 15)); hpbg.setAttribute("y", "17");
+    hpbg.setAttribute("width", "30"); hpbg.setAttribute("height", "3.5");
+    hpbg.setAttribute("rx", "1.5");
+    inner.appendChild(hpbg);
+
+    var hp = document.createElementNS(SVGNS, "rect");
+    hp.setAttribute("class", "hpbar");
+    hp.setAttribute("x", String(off - 15)); hp.setAttribute("y", "17");
+    hp.setAttribute("height", "3.5");
+    hp.setAttribute("rx", "1.5");
+    inner.appendChild(hp);
+
+    g.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      onHexClick({ currentTarget: { dataset: { x: u.x, y: u.y } } });
+    });
+    g.addEventListener("mouseenter", function(){ hoverPreview(u); });
+    g.addEventListener("mouseleave", function(){ hoverPreview(null); });
+
+    gUnit.appendChild(g);
+    u.el = g;
+    u.inner = inner;
+    u.hpEl = hp;
+    u.cntEl = cnt;
+    u.bodyEl = body;
+    u.glyphEl = gl;
+    u.badgeEl = badge;
+    u.hpBgEl = hpbg;
+    u.bodyW = bw;
+    layoutUnit(u);
+  }
+
+  // 双格单位转身：胶囊、字、角标、血条整体镜像到头格的另一侧。
+  // 只改"相对头格的偏移"，外层 transform（头格中心）不动，
+  // 所以原地扭头时玩家看到的是身子不挪、朝向翻转。
+  function layoutUnit(u) {
+    if (!u.bodyEl || !isWide(u)) return;
+    var off = dirOf(u) * (HEXW / 2);
+    u.bodyEl.setAttribute("x", String(off - u.bodyW / 2));
+    u.glyphEl.setAttribute("x", String(off));
+    u.badgeEl.setAttribute("x", String(off + 7));
+    u.cntEl.setAttribute("x", String(off + 16.5));
+    u.hpBgEl.setAttribute("x", String(off - 15));
+    u.hpEl.setAttribute("x", String(off - 15));
+  }
+
+  function attackReach(u) { return u.ranged ? 1 : (u.reach || 1); }
+
+  /* 远程单位的两种形态 —— H3 规则：
+     ① 有弹药 + 身边没有敌人 + 本回合没移动过 → 能射（shoot）
+     ② 弹药耗尽，或有敌人贴身（被贴住），或已经移动过 → 只能近战（melee）
+     弹药耗尽时它就是一个普通近战兵，可以"走过去再打"。 */
+  function inMelee(u) {
+    return alive(u.side === "us" ? "them" : "us").some(function(e){
+      return unitDist(u, e) === 1;
+    });
+  }
+
+  function canShootNow(u) {
+    return !!u.ranged && (u.shots || 0) > 0 && !hasMoved && !inMelee(u);
+  }
+
+  // 能站着开打的格子：默认只有贴身邻格；带 reach 的单位允许站到 2 格外
+  // 双格目标的外圈 = 两格各自邻居的并集（去掉目标自己占的两格）
+  // 注意"头格"才是站位：双格单位必须先扭头，让靠目标的那一端当头部。
+  function approachOptions(act, target) {
+    if (canShootNow(act)) return [{ x: act.x, y: act.y, cost: 0, ranged: true, dir: dirOf(act) }];
+    var R = attackReach(act);
+    var out = [], tcells = cellsOf(target);
+
+    // 原地打：头已经贴身；双格单位还允许"原地扭头"（占位不变，尾巴换边）
+    var self = selfSpot(act, target, R);
+    if (self) out.push(self);
+
+    for (var yy = 0; yy < H; yy++) {
+      for (var xx = 0; xx < W; xx++) {
+        if (xx === act.x && yy === act.y) continue;
+        var c = pathCostTo(xx, yy);
+        if (c === null || c <= 0) continue;          // 不在本回合可达范围（已含双格站位校验）
+        var dmin = 99;
+        for (var i = 0; i < tcells.length; i++) {
+          var d = dist(xx, yy, tcells[i][0], tcells[i][1]);
+          if (d < dmin) dmin = d;
+        }
+        if (dmin < 1 || dmin > R) continue;          // 头必须真的贴到目标（R 默认 1）
+        var fd = fitDir(act, xx, yy, act, awayDir(act, xx, yy, target));
+        if (!fd) continue;
+        out.push({ x: xx, y: yy, cost: c, dir: fd });
+      }
+    }
+    out.sort(function(a, b){ return a.cost - b.cost; });
+    return out;
+  }
+
+  // 原地能不能打：头贴身直接用；双格再试"把头扭到另一端"
+  function selfSpot(act, target, R) {
+    var near = nearestCell({ x: act.x, y: act.y }, target);
+    if (near && dist(act.x, act.y, near[0], near[1]) <= R)
+      return { x: act.x, y: act.y, cost: 0, dir: dirOf(act) };
+    if (!isWide(act)) return null;
+    var d = dirOf(act), ox = act.x + d;
+    if (ox < 0 || ox >= W || !near) return null;
+    if (dist(ox, act.y, near[0], near[1]) > R) return null;
+    // 尾巴那端更近 → 扭头，顺便把"站位"记到那一格上（占的两格没变）
+    return { x: ox, y: act.y, cost: 0, dir: -d, turn: true };
+  }
+
+  // 在候选里挑出当前选中的那个；没选过就用最省的
+  function pickSpot(opts) {
+    if (!opts || !opts.length) return null;
+    if (chosenApproach) {
+      for (var i = 0; i < opts.length; i++) {
+        if (key(opts[i].x, opts[i].y) === chosenApproach) return opts[i];
+      }
+    }
+    return opts[0];
+  }
+
+  function canStrikeNow(act, target) {
+    if (canShootNow(act)) return true;
+    return unitDist(act, target) <= attackReach(act);
+  }
+
+  // 龙息：站在 from 打 t 时，身后那一格以及里面的单位
+  // 方向必须取「起点 → 目标近端格」这条直线，斜着打才穿得对。
+  // （以前用 near→far 当方向，那是目标自己的身子朝向；斜着打双格单位会算成横着穿）
+  // 双格目标若整个身子正好压在这条直线上，就一格一格往前穿，直到离开身子。
+  function breathInfo(act, from, t, steps) {
+    if (!act.breath || act.ranged || !from) return null;
+    // from 是出手时的头格。双格单位若传进来的方向不同（预览另一个落脚格），
+    // 就按那个朝向重新取身体两格，再从里面挑离目标最近的一端当起点。
+    var fromCell = { x: from.x, y: from.y };
+    if (isWide(act)) {
+      var fd = (from.dir === 1 || from.dir === -1) ? from.dir : dirOf(act);
+      var bc = null, bd = 99;
+      cellsAt(act, from.x, from.y, fd).forEach(function(c){
+        var d = unitDist({ x: c[0], y: c[1], side: act.side, size: 1 }, t);
+        if (d < bd) { bd = d; bc = c; }
+      });
+      if (bc) fromCell = { x: bc[0], y: bc[1] };
+    }
+    var near = nearestCell(fromCell, t);
+    if (!near || dist(fromCell.x, fromCell.y, near[0], near[1]) !== 1) return null;
+    var a = toCube(fromCell.x, fromCell.y), b = toCube(near[0], near[1]);
+    var dv = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+    var cur = [b[0] + dv[0], b[1] + dv[1], b[2] + dv[2]];
+    var h = fromCube(cur);
+    var guard = 0;
+    while (h && coversHex(t, h[0], h[1]) && guard++ < 4) {
+      cur = [cur[0] + dv[0], cur[1] + dv[1], cur[2] + dv[2]];
+      h = fromCube(cur);
+    }
+    if (!h) return null;
+    var u = unitAt(h[0], h[1]);
+    if (!u || u.dead || u === act || coversHex(t, h[0], h[1])) u = null;
+    return { hex: h, unit: u, r: u ? calcDamage(act, u, steps) : null };
+  }
+
+  // 提示条用的一句话龙息说明
+  function breathText(pv, act) {
+    var bi = pv.breath;
+    if (!bi || !bi.unit) return "";
+    return " · 龙息→" + bi.unit.name + " " + bi.r.min + "–" + bi.r.max +
+      (bi.unit.side === act.side ? "(友军)" : "");
+  }
+
+  function damagePreview(act, t, spot) {    var opts = approachOptions(act, t);
+    var ap = spot || pickSpot(opts);
+    // 站位是 ap 这一格（双格单位的头格）；若它本来就是自己的另一格，那就是"原地扭头"
+    var onSelf = !!ap && coversHex(act, ap.x, ap.y);
+    var shooting = canShootNow(act);
+    var steps = (!shooting && ap && !onSelf) ? ap.cost : 0;
+    var r = calcDamage(act, t, steps);
+    var meets = !!ap && (function(){
+      var cs = cellsOf(t), m = 99;
+      for (var i = 0; i < cs.length; i++) m = Math.min(m, dist(ap.x, ap.y, cs[i][0], cs[i][1]));
+      return m === 1;
+    })();
+    var back = (!shooting && !t.retaliated && meets) ? calcDamage(t, act, 0) : null;
+    return {
+      opts: opts, ap: ap, steps: steps, r: r, back: back, shooting: shooting,
+      breath: breathInfo(act, { x: ap ? ap.x : act.x, y: ap ? ap.y : act.y,
+                                dir: ap && ap.dir ? ap.dir : dirOf(act) }, t, steps),
+      kills: Math.min(t.count, Math.floor(r.avg / t.perHp))
+    };
+  }
+
+  function markHex(x, y, cls) {
+    var src = hexEls[key(x, y)];
+    if (!src) return;
+    var p = document.createElementNS(SVGNS, "polygon");
+    p.setAttribute("points", src.getAttribute("points"));
+    p.setAttribute("class", "hex " + cls);
+    gPrev.appendChild(p);
+  }
+
+  // 选位模式：全场压暗，只留候选格亮着。
+  // 不压暗的话，"在挑站位"和"只是看看伤害"看起来一模一样。
+  function fieldShield() {
+    var r = document.createElementNS(SVGNS, "rect");
+    r.setAttribute("x", "0"); r.setAttribute("y", "0");
+    r.setAttribute("width", VW); r.setAttribute("height", VH);
+    r.setAttribute("fill", "#141a12");
+    r.setAttribute("opacity", ".18");
+    r.setAttribute("pointer-events", "none");
+    return r;
+  }
+
+  // 候选格 → 目标的一道细箭头：站这一格打，方向就是它。
+  // 六个候选格各画一条，落在目标处汇聚，方向差别一眼可比。
+  function dirTick(x, y, tx, ty, strong) {
+    var p0 = center(x, y), p1 = center(tx, ty);
+    var dx = p1.cx - p0.cx, dy = p1.cy - p0.cy;
+    var L = Math.sqrt(dx * dx + dy * dy) || 1;
+    var ux = dx / L, uy = dy / L;
+    // 六边形是紧挨着的，两格之间几乎没有空隙——短线会被挤成看不见的 14px。
+    // 所以从格心直接指到目标中心，画成一条完整指向线；格内文字靠白描边浮在线上。
+    var a = 2, b = L - 5;
+    var ax = p0.cx + ux * a, ay = p0.cy + uy * a;
+    var bx = p0.cx + ux * b, by = p0.cy + uy * b;
+    // 白色衬底：箭头压在浅橙候选格上，纯橙会糊成一片
+    var bg = document.createElementNS(SVGNS, "line");
+    bg.setAttribute("x1", ax); bg.setAttribute("y1", ay);
+    bg.setAttribute("x2", bx); bg.setAttribute("y2", by);
+    bg.setAttribute("stroke", "#fffdf6");
+    bg.setAttribute("stroke-width", strong ? "6" : "5.4");
+    bg.setAttribute("stroke-linecap", "round");
+    bg.setAttribute("opacity", strong ? ".95" : ".8");
+    bg.setAttribute("pointer-events", "none");
+    gPrev.appendChild(bg);
+
+    var ln = document.createElementNS(SVGNS, "line");
+    ln.setAttribute("x1", ax); ln.setAttribute("y1", ay);
+    ln.setAttribute("x2", bx); ln.setAttribute("y2", by);
+    ln.setAttribute("stroke", "#8f3f06");
+    ln.setAttribute("stroke-width", strong ? "3" : "2.6");
+    ln.setAttribute("stroke-linecap", "round");
+    ln.setAttribute("opacity", strong ? "1" : ".92");
+    ln.setAttribute("marker-end", "url(#dirArrow)");
+    ln.setAttribute("pointer-events", "none");
+    gPrev.appendChild(ln);
+  }
+
+  // 能烧到第二个单位的候选格，右上角盖一枚紫标「2」
+  function twoTag(x, y) {
+    var c = center(x, y);
+    var g = document.createElementNS(SVGNS, "g");
+    g.setAttribute("pointer-events", "none");
+    var bg = document.createElementNS(SVGNS, "circle");
+    bg.setAttribute("cx", c.cx + 14); bg.setAttribute("cy", c.cy - 13);
+    bg.setAttribute("r", "7.5");
+    bg.setAttribute("fill", "#7d2b8c");
+    g.appendChild(bg);
+    var tx = document.createElementNS(SVGNS, "text");
+    tx.setAttribute("x", c.cx + 14); tx.setAttribute("y", c.cy - 9.5);
+    tx.setAttribute("text-anchor", "middle");
+    tx.setAttribute("font-size", "9.5");
+    tx.setAttribute("font-weight", "700");
+    tx.setAttribute("fill", "#fff");
+    tx.setAttribute("font-family", "system-ui,sans-serif");
+    tx.textContent = "2";
+    g.appendChild(tx);
+    gPrev.appendChild(g);
+  }
+
+  // 在候选格上标步数与伤害，让"站哪打、打多少"一眼可比
+  function labelHex(x, y, dmg, steps) {
+    var c = center(x, y);
+    if (steps > 0) {
+      var a = document.createElementNS(SVGNS, "text");
+      a.setAttribute("x", c.cx);
+      a.setAttribute("y", c.cy + (dmg === null ? 4 : -5));
+      a.setAttribute("text-anchor", "middle");
+      a.setAttribute("font-size", "8.5");
+      a.setAttribute("fill", "#b8621f");
+      a.setAttribute("font-family", "system-ui,sans-serif");
+      a.setAttribute("pointer-events", "none");
+      // 选位时全场压暗、上面还会过一道方向箭头，文字得自带白边才浮得起来
+      a.setAttribute("stroke", "#fff8ee");
+      a.setAttribute("stroke-width", "2.2");
+      a.setAttribute("paint-order", "stroke");
+      a.textContent = steps + "步";
+      gPrev.appendChild(a);
+    }
+    if (dmg === null) return;
+    var b = document.createElementNS(SVGNS, "text");
+    b.setAttribute("x", c.cx);
+    b.setAttribute("y", c.cy + (steps > 0 ? 8 : 4));
+    b.setAttribute("text-anchor", "middle");
+    b.setAttribute("font-size", "11");
+    b.setAttribute("font-weight", "600");
+    b.setAttribute("fill", "#8d4413");
+    b.setAttribute("font-family", "system-ui,sans-serif");
+    b.setAttribute("pointer-events", "none");
+    b.setAttribute("stroke", "#fff8ee");
+    b.setAttribute("stroke-width", "2.4");
+    b.setAttribute("paint-order", "stroke");
+    b.textContent = dmg;
+    gPrev.appendChild(b);
+  }
+
+  function renderPreview() {
+    gPrev.innerHTML = "";
+    var act = current();
+    if (!act || over) return;
+    var t = (approachMode && approachMode.target) ? approachMode.target : hoverUnit;
+    if (!t || t.dead || t.side === act.side) return;
+    if (!atkSet.has(key(t.x, t.y))) return;
+
+    var pv = damagePreview(act, t);
+    if (!pv.ap) return;
+
+    var onSelf = (pv.ap.x === act.x && pv.ap.y === act.y);
+    // 选位模式（点了敌人、正在挑落脚格）：全场压暗，只亮候选格。
+    // 贴身时"原地"也是候选之一，同样压暗——不然看不出换个方向站会烧到谁。
+    var picking = !!approachMode;
+    if (picking) gPrev.appendChild(fieldShield());
+
+    // 每个候选格各算一遍：站这儿打，龙息会穿到哪一格。
+    // 以前只算选中格，玩家看不出"换一侧站会不会多烧一个"。
+    var multi = pv.opts.length > 1;
+    var rows = pv.opts.map(function(o){
+      var onIt = (o.x === pv.ap.x && o.y === pv.ap.y);
+      return {
+        o: o,
+        bi: onIt ? pv.breath : breathInfo(act, o, t, o.cost),
+        dmg: Math.round(calcDamage(act, t, o.cost).avg)
+      };
+    });
+    var dmgs = rows.map(function(r){ return r.dmg; });
+    var varied = dmgs.some(function(d){ return d !== dmgs[0]; });   // 冲锋等单位才有差异
+
+    // 会被龙息波到的格子先铺底（多个候选格烧同一格时只铺一次）
+    if (picking) {
+      var seenBreath = {};
+      rows.forEach(function(r){
+        if (!r.bi) return;
+        var k = key(r.bi.hex[0], r.bi.hex[1]);
+        if (seenBreath[k]) return;
+        seenBreath[k] = 1;
+        markHex(r.bi.hex[0], r.bi.hex[1], "breath-ghost");
+      });
+    }
+
+    for (var i = 0; i < rows.length; i++) {
+      var o = rows[i].o;
+      if (o.x === pv.ap.x && o.y === pv.ap.y) continue;
+      markHex(o.x, o.y, "approach-opt");
+      if (picking) dirTick(o.x, o.y, t.x, t.y, false);
+      if (multi) labelHex(o.x, o.y, varied ? dmgs[i] : null, o.cost);
+      if (rows[i].bi && rows[i].bi.unit) twoTag(o.x, o.y);
+    }
+    if (!onSelf) markHex(pv.ap.x, pv.ap.y, "approach");
+    if (multi) labelHex(pv.ap.x, pv.ap.y, varied ? Math.round(pv.r.avg) : null, pv.steps);
+    if (picking) dirTick(pv.ap.x, pv.ap.y, t.x, t.y, true);
+    // 贴身原地打时没有候选格，角标画在龙自己身上反而像误标——那种情况气泡里已经写了"龙息→谁"
+    if (pv.breath && pv.breath.unit) twoTag(pv.ap.x, pv.ap.y);
+
+    var from = center(pv.ap.x, pv.ap.y), to = center(t.x, t.y);
+    var dx = to.cx - from.cx, dy = to.cy - from.cy;
+    var len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var moving = !(pv.ap.x === act.x && pv.ap.y === act.y);
+
+    if (moving && !multi) {
+      var lab = document.createElementNS(SVGNS, "text");
+      lab.setAttribute("x", from.cx);
+      lab.setAttribute("y", from.cy + 6);
+      lab.setAttribute("text-anchor", "middle");
+      lab.setAttribute("font-size", "10");
+      lab.setAttribute("fill", "#b8621f");
+      lab.setAttribute("font-family", "system-ui,sans-serif");
+      lab.setAttribute("pointer-events", "none");
+      lab.textContent = "落脚 " + pv.steps + " 步";
+      gPrev.appendChild(lab);
+    }
+
+    var ring = document.createElementNS(SVGNS, "circle");
+    ring.setAttribute("cx", to.cx); ring.setAttribute("cy", to.cy);
+    ring.setAttribute("r", "19");
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "#d3762a");
+    ring.setAttribute("stroke-width", "1.5");
+    ring.setAttribute("stroke-dasharray", "4 3");
+    gPrev.appendChild(ring);
+
+    if (pv.shooting || len > 32) {
+      var line = document.createElementNS(SVGNS, "line");
+      line.setAttribute("x1", from.cx + dx / len * 17);
+      line.setAttribute("y1", from.cy + dy / len * 17);
+      line.setAttribute("x2", to.cx - dx / len * 22);
+      line.setAttribute("y2", to.cy - dy / len * 22);
+      line.setAttribute("stroke", "#d3762a");
+      line.setAttribute("stroke-width", "2.2");
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("marker-end", "url(#atkArrow)");
+      gPrev.appendChild(line);
+    }
+
+    // 龙息：把"目标身后那格"标出来，站哪一侧的差别就看得见了
+    var bi = pv.breath;
+    if (bi) {
+      var bc = center(bi.hex[0], bi.hex[1]);
+      markHex(bi.hex[0], bi.hex[1], "breath");
+      var l2 = document.createElementNS(SVGNS, "line");
+      l2.setAttribute("x1", to.cx); l2.setAttribute("y1", to.cy);
+      l2.setAttribute("x2", bc.cx); l2.setAttribute("y2", bc.cy);
+      l2.setAttribute("stroke", "#a254b0");
+      l2.setAttribute("stroke-width", "2");
+      l2.setAttribute("stroke-dasharray", "5 3");
+      l2.setAttribute("marker-end", "url(#breathArrow)");
+      gPrev.appendChild(l2);
+      if (bi.unit) {
+        var bl = document.createElementNS(SVGNS, "text");
+        bl.setAttribute("x", bc.cx);
+        bl.setAttribute("y", bc.cy + 4);
+        bl.setAttribute("text-anchor", "middle");
+        bl.setAttribute("font-size", "11");
+        bl.setAttribute("font-weight", "600");
+        bl.setAttribute("fill", "#7d2b8c");
+        bl.setAttribute("font-family", "system-ui,sans-serif");
+        bl.setAttribute("pointer-events", "none");
+        bl.textContent = Math.round(bi.r.avg);
+        gPrev.appendChild(bl);
+      }
+    }
+
+    // 伤害气泡已撤：数值统一由底部状态栏/战斗日志说（画面上只留站位与龙息方向）
+  }
+
+  function updateConfirmBar() {
+    var bar = document.getElementById("confirmBar");
+    var txt = document.getElementById("confirmText");
+    if (!pendingAttack) { bar.classList.remove("show"); return; }
+    var act = current(), t = pendingAttack.target;
+    if (!act || !t || t.dead || pendingAttack.actId !== act.id) {
+      pendingAttack = null;
+      bar.classList.remove("show");
+      return;
+    }
+    var pv = damagePreview(act, t, pendingAttack.spot || null);
+    txt.innerHTML = "攻击 <b>" + t.name + " × " + t.count + "</b> · 预计 " +
+      pv.r.min + "–" + pv.r.max +
+      (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : " · 无反击") +
+      breathText(pv, act) +
+      (pv.shooting ? " · 射击" : (pv.ap ? " · 从 (" + pv.ap.x + "," + pv.ap.y + ") " + pv.steps + " 步" : ""));
+    bar.classList.add("show");
+  }
+
+  function performAttack(act, target, spot) {
+    if (!act || !target || target.dead || busy) return;
+    var pv = damagePreview(act, target, spot || null);
+    if (!pv.ap) return;
+    // 落脚格可能就是自己的另一半身子（原地扭头），那不算"走过去"
+    var onSelf = coversHex(act, pv.ap.x, pv.ap.y);
+    var dest = onSelf ? null : { x: pv.ap.x, y: pv.ap.y };
+    var steps = dest ? pv.steps : 0;
+    var shooting = !!pv.shooting;      // 必须在 hasMoved 置位之前定下来
+    var face = (isWide(act) && (pv.ap.dir === 1 || pv.ap.dir === -1)) ? pv.ap.dir : dirOf(act);
+
+    pendingAttack = null;
+    hoverUnit = null;
+    approachMode = null;
+    chosenApproach = null;
+    render();
+    updateConfirmBar();
+
+    var strike = function(){
+      hasMoved = true;
+      // 到位后按选定的朝向站好（尾巴甩在远离目标的一侧），再出手
+      if (onSelf) { act.x = pv.ap.x; act.y = pv.ap.y; }
+      if (isWide(act) && !shooting) act.dir = face;
+      doAttack(act, target, steps, shooting);
+      render();
+      if (!over) endActorSoon(620);
+    };
+
+    if (dest) {
+      // 先走过去，再出手 —— 不是瞬移，路径上的格子逐个经过
+      setHint(act.name + " 走向 (" + dest.x + "," + dest.y + ")，到位后攻击 " + target.name + "…");
+      walkTo(act, dest, strike);
+    } else {
+      strike();
+    }
+  }
+
+  function hoverPreview(u) {
+    hoverUnit = u;
+    var act = current();
+    if (!u || !act || u.dead || u.side === act.side) { renderPreview(); return; }
+    if (approachMode && approachMode.target && approachMode.target !== u) { renderPreview(); return; }
+    if (!approachMode && lastHoverId !== u.id) {
+      lastHoverId = u.id;
+      chosenApproach = null;
+    }
+    if (!atkSet.has(key(u.x, u.y))) {
+      setHint(u.name + " × " + u.count + " · 距离 " + unitDist(act, u) +
+        " 格 · 可移动 " + act.speed + " 格" + (hasMoved ? "（本回合已移动）" : "") + " —— 打不到");
+      renderPreview();
+      return;
+    }
+    var opts = approachOptions(act, u);
+    if (approachMode) {
+      setHint(approachHint(act, u));
+    } else if (opts.length > 1) {
+      // 站位是关键：有得选就先说"有几个站位"，具体方向点了再展开
+      var pv = damagePreview(act, u);
+      setHint(u.name + " × " + u.count + " · " + opts.length + " 个站位可选 · 点它展开" +
+        (pv.shooting ? "（射击）" : "（原地近战 " + pv.r.min + "–" + pv.r.max + breathText(pv, act) + "）"));
+    } else if (canStrikeNow(act, u)) {
+      var pv2 = damagePreview(act, u);
+      setHint("对 " + u.name + " × " + u.count + "：预计 " + pv2.r.min + "–" + pv2.r.max +
+        " · 击杀 " + pv2.kills +
+        (pv2.back ? " · 反击 " + pv2.back.min + "–" + pv2.back.max : " · 无反击") +
+        breathText(pv2, act) +
+        (pv2.shooting ? " · 射击" : " · 近战"));
+    } else {
+      setHint(u.name + " × " + u.count + " · " + opts.length +
+        " 个落脚格可达 · 点它选择从哪一侧进攻");
+    }
+    renderPreview();
+  }
+
+  function render() {
+    var act = current();
+
+    for (var y = 0; y < H; y++) {
+      for (var x2 = 0; x2 < W; x2++) {
+        var e = hexEls[key(x2, y)];
+        e.classList.remove("in-range", "atk", "sel", "can-move", "can-attack");
+        if (selected && selected === act) {
+          if (moveMap.has(key(x2, y)) && moveMap.get(key(x2, y)) > 0 && !unitAt(x2, y)) {
+            e.classList.add("in-range", "can-move");
+          }
+          if (atkSet.has(key(x2, y))) {
+            e.classList.add("atk", "can-attack");
+          }
+        }
+      }
+    }
+    if (selected) {
+      cellsOf(selected).forEach(function(c){
+        var se = hexEls[key(c[0], c[1])];
+        if (se) se.classList.add("sel");
+      });
+    }
+
+    units.forEach(function(u){
+      if (u.dead) return;
+      ensureUnitEl(u);
+      layoutUnit(u);
+      var c = center(u.x, u.y);
+      u.el.style.transform = "translate(" + c.cx + "px," + c.cy + "px)";
+      u.el.classList.toggle("active", act === u);
+      u.el.classList.toggle("defending", !!u.defending);
+      u.el.classList.toggle("foe", !!(act && u.side !== act.side && atkSet.has(key(u.x, u.y))));
+      u.cntEl.textContent = u.count;
+      if (u.count >= 100) {
+        u.cntEl.textContent = "99+";
+      }
+      var pct = Math.max(0, u.hp / u.maxHp);
+      u.hpEl.setAttribute("width", (30 * pct).toFixed(2));
+    });
+
+    var card = document.getElementById("curCard");
+    if (act && act.side === "us") {
+      card.style.display = "";
+      card.innerHTML =
+        '<h3>当前行动</h3>' +
+        '<div class="who"><div class="dot us">' + act.glyph + '</div>' +
+        '<div><div class="n">' + act.name + (act.breath ? " · 龙息" : "") + (act.defending ? " · 防御中" : "") + '</div>' +
+        '<div class="c">× ' + act.count + ' · 生命 ' + Math.max(0, act.hp) + '/' + act.maxHp + '</div></div></div>' +
+        '<div class="stats">' +
+        '<div>攻 <b>' + act.att + '</b></div><div>防 <b>' + act.def + '</b></div>' +
+        '<div>伤 <b>' + act.dmg[0] + '–' + act.dmg[1] + '</b></div><div>速 <b>' + act.speed + '</b></div>' +
+        (act.ranged ? '<div>弹 <b>' + (act.shots || 0) + '/' + act.maxShots + '</b></div>' +
+          '<div>' + ((act.shots || 0) > 0 ? (inMelee(act) ? '被贴身·近战' : '远程') : '弹药尽·近战') + '</div>' : '') +
+        '</div>';
+    } else {
+      card.style.display = "none";
+    }
+
+    renderQueue();
+
+    var myTurn = !!act && act.side === "us" && !over;
+    var canChoose = myTurn && !hasMoved;      // 走过位就只能打或过去，防御/等待都作废
+    document.getElementById("btnDefend").disabled = !canChoose;
+    document.getElementById("btnWait").disabled = !canChoose;
+
+    renderPreview();
+    updateConfirmBar();
+  }
+
+  function renderQueue() {
+    var box = document.getElementById("queue");
+    box.innerHTML = "";
+    if (!order) return;
+    var shown = 0;
+    order.forEach(function(id){
+      if (shown >= 10) return;
+      var u = units.filter(function(q){ return q.id === id; })[0];
+      if (!u) return;
+      var d = document.createElement("div");
+      d.className = "qtok " + u.side + (u.dead ? " dead" : "") + (shown === 0 ? " now" : "");
+      d.textContent = u.glyph;
+      var s = document.createElement("span");
+      s.textContent = u.dead ? "0" : (u.count >= 100 ? "99+" : u.count);
+      d.appendChild(s);
+      box.appendChild(d);
+      shown++;
+    });
+  }
+
+  document.getElementById("cfYes").addEventListener("click", function(){
+    var act = current();
+    if (!act || !pendingAttack) return;
+    if (pendingAttack.actId !== act.id) { pendingAttack = null; updateConfirmBar(); return; }
+    performAttack(act, pendingAttack.target, pendingAttack.spot);
+  });
+
+  document.getElementById("cfNo").addEventListener("click", function(){
+    var act = current();
+    var t = pendingAttack && pendingAttack.target;
+    pendingAttack = null;
+    // 取消后回到选位置状态，而不是把整个流程丢掉（贴身也一样能换站位）
+    if (act && t && !t.dead && !hasMoved) {
+      approachMode = { target: t };
+      hoverUnit = t;
+      render();
+      setHint(approachHint(act, t));
+      return;
+    }
+    hoverUnit = null;
+    render();
+    setHint("已取消 · 点击其他目标或蓝格继续");
+  });
+
+  document.getElementById("btnDefend").addEventListener("click", function(){
+    var act = current();
+    if (!act || act.side !== "us" || hasMoved) return;
+    act.defending = true;
+    log("<b>" + act.name + "</b> 原地防御（防御 +30%）", "us");
+    render();
+    endActorSoon(200);
+  });
+
+  document.getElementById("btnWait").addEventListener("click", function(){
+    var act = current();
+    if (!act || act.side !== "us" || hasMoved) return;
+    if (order.length > 1) {
+      order.push(order.shift());
+      log("<b>" + act.name + "</b> 等待，本轮延后行动", "us");
+      selected = null;
+      nextActor();
+    }
+  });
+
+  document.getElementById("restart").addEventListener("click", init);
+
+  function init() {
+    var ov = document.querySelector(".over");
+    if (ov) ov.remove();
+    gUnit.innerHTML = "";
+    gFx.innerHTML = "";
+    units = makeUnits();
+    faceAll();                          // 开局站位：双格单位的头一律朝敌人
+    roundNo = 1;
+    order = [];
+    selected = null;
+    hasMoved = false;
+    moveMap = new Map();
+    atkSet = new Set();
+    over = null;
+    hoverUnit = null;
+    pendingAttack = null;
+    approachMode = null; chosenApproach = null; lastHoverId = null;
+    document.getElementById("roundNo").textContent = "1";
+    document.getElementById("log").innerHTML = "";
+    document.getElementById("btnDefend").disabled = false;
+    document.getElementById("btnWait").disabled = false;
+    log("遭遇战开始 · 我方 4 队 vs 敌方 4 队", "sys");
+    render();
+    startRound();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

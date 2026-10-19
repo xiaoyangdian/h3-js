@@ -17,7 +17,7 @@ El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); if (k ===
 El.prototype.getAttribute = function(k){ return this.attrs[k]; };
 El.prototype.appendChild = function(c){ this.children.push(c); c.parentNode = this; return c; };
 El.prototype.insertBefore = function(c, ref){ var i = this.children.indexOf(ref); if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); c.parentNode = this; return c; };
-El.prototype.removeChild = function(c){ var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
+El.prototype.removeChild = function(c){ if (!c) return c; var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
 El.prototype.addEventListener = function(t, fn){ (this.listeners[t] = this.listeners[t] || []).push(fn); };
 El.prototype.remove = function(){ if (this.parentNode) this.parentNode.removeChild(this); };
 El.prototype.querySelector = function(){ return null; };
@@ -26,6 +26,9 @@ Object.defineProperty(El.prototype, 'innerHTML', {
   set: function(v){ this._html = v; this.children = []; }
 });
 Object.defineProperty(El.prototype, 'offsetWidth', { get: function(){ return 0; } });
+// log() 裁日志用 box.lastChild / box.firstChild——桩必须提供，否则 removeChild(undefined) 抛错
+Object.defineProperty(El.prototype, 'firstChild', { get: function(){ return this.children[0] || null; } });
+Object.defineProperty(El.prototype, 'lastChild', { get: function(){ return this.children[this.children.length - 1] || null; } });
 
 var store = {};
 global.document = {
@@ -37,12 +40,13 @@ global.document = {
 
 var html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 var src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+src = src.replace(/\r\n/g, '\n');   // 容忍 CRLF checkout：先归一成 LF 再做字面量注入
 src = src.replace('  init();\n})();',
   '  globalThis.__T = {\n' +
   '    hexEls: function(){ return hexEls }, units: function(){ return units },\n' +
   '    get order(){ return order }, get selected(){ return selected },\n' +
   '    dist: dist, neighbors: neighbors, center: center, key: key,\n' +
-  '    current: current, calcDamage: calcDamage, effDef: effDef,\n' +
+  '    current: current, calcDamage: calcDamage, effDef: effDef, dmgMult: dmgMult, rollBase: rollBase, rollLuck: rollLuck, rollDamage: rollDamage,\n' +
   '    computeOptions: computeOptions, onHexClick: onHexClick,\n' +
   '    get moveMap(){ return moveMap }, get atkSet(){ return atkSet },\n' +
   '    doAttack: doAttack, applyDamage: applyDamage, init: init,\n' +
@@ -108,13 +112,38 @@ ok('队列 = 存活数', T.order.length === T.units().length, T.order.length);
 console.log('--- 4. 伤害公式 ---');
 var kn = byId('A4'), imp = byId('E1');
 var r = T.calcDamage(kn, imp, 0);
-console.log('  骑士10 × 均伤9.5 vs 魔童(防3): ' + r.min + '–' + r.max);
+console.log('  骑士10 × [7,12] vs 魔童(防3): ' + r.min + '–' + r.max);
 ok('区间 min<max', r.min < r.max);
 ok('攻高防加成', r.max > 95, r.max);
-ok('攻低防减成', T.calcDamage(imp, kn, 0).max < 120, T.calcDamage(imp, kn, 0).max);
+// 攻低防减成：魔童(攻2) 打骑士(防9) 要比打同防(2) 的伤害低
+ok('攻低防减成', T.calcDamage(imp, kn, 0).max < T.calcDamage(imp, { def: imp.att }, 0).max,
+   T.calcDamage(imp, kn, 0).max + ' vs ' + T.calcDamage(imp, { def: imp.att }, 0).max);
 var impDef = Object.assign({}, imp); impDef.defending = true;
-ok('防御 +30% 减伤', T.calcDamage(kn, impDef, 0).max < r.max);
+ok('防御 +20% 减伤', T.calcDamage(kn, impDef, 0).max < r.max);
 ok('冲锋每格 +5%', T.calcDamage(kn, imp, 4).max > r.max);
+// 公式硬数值（对齐原版：I1=0.05×差 封顶3.0；R1=0.025×差 封底0.7）
+ok('攻防差 7 → 乘数 1.35', Math.abs(T.calcDamage(kn, imp, 0).avg / (10 * 9.5) - 1.35) < 0.01,
+   T.calcDamage(kn, imp, 0).avg / 95);
+ok('正差封顶 +300%（括号最大 4.0）', T.calcDamage({ count:1, dmg:[10,10], att:100 }, { def:1 }, 0).max === 40,
+   T.calcDamage({ count:1, dmg:[10,10], att:100 }, { def:1 }, 0).max);
+ok('负差封底 30%', T.calcDamage({ count:1, dmg:[10,10], att:1 }, { def:100 }, 0).max === 3,
+   T.calcDamage({ count:1, dmg:[10,10], att:1 }, { def:100 }, 0).max);
+ok('冲锋对枪兵无效', T.calcDamage(kn, { def:3, pikeman:true }, 4).max === T.calcDamage(kn, { def:3, pikeman:true }, 0).max);
+// 幸运一击：+N → N/24 概率，触发后括号 +1.00（SoD I4 加法）
+var luck0 = T.calcDamage(kn, imp, 0, false, false), luck1 = T.calcDamage(kn, imp, 0, false, true);
+ok('幸运一击 = 括号 +1.00', Math.abs(luck1.avg / luck0.avg - (2 + 0.35) / 1.35) < 0.01,
+   luck1.avg / luck0.avg);
+ok('无 luck 字段不触发', T.rollLuck(kn) === false);
+var lucky = { luck: 3 }, n24 = 0;
+for (var li = 0; li < 2400; li++) if (T.rollLuck(lucky)) n24++;
+ok('luck +3 ≈ 1/8 触发', n24 > 200 && n24 < 400, n24 + '/2400');
+ok('掷骰落在 [N×dmg0, N×dmg1]', (function(){
+  for (var i = 0; i < 200; i++) {
+    var s = T.rollBase(kn);
+    if (s < 10 * 7 || s > 10 * 12) return false;
+  }
+  return true;
+})());
 
 var dogStart = null;
 setTimeout(function(){

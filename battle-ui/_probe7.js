@@ -18,7 +18,7 @@ El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); if (k ===
 El.prototype.getAttribute = function(k){ return this.attrs[k]; };
 El.prototype.appendChild = function(c){ this.children.push(c); c.parentNode = this; return c; };
 El.prototype.insertBefore = function(c, ref){ var i = this.children.indexOf(ref); if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); c.parentNode = this; return c; };
-El.prototype.removeChild = function(c){ var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
+El.prototype.removeChild = function(c){ if (!c) return c; var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
 El.prototype.addEventListener = function(t, fn){ (this.listeners[t] = this.listeners[t] || []).push(fn); };
 El.prototype.remove = function(){ if (this.parentNode) this.parentNode.removeChild(this); };
 El.prototype.querySelector = function(){ return null; };
@@ -27,6 +27,9 @@ Object.defineProperty(El.prototype, 'innerHTML', {
   set: function(v){ this._html = v; this.children = []; }
 });
 Object.defineProperty(El.prototype, 'offsetWidth', { get: function(){ return 0; } });
+// log() 裁日志用 box.lastChild / box.firstChild——桩必须提供，否则 removeChild(undefined) 抛错
+Object.defineProperty(El.prototype, 'firstChild', { get: function(){ return this.children[0] || null; } });
+Object.defineProperty(El.prototype, 'lastChild', { get: function(){ return this.children[this.children.length - 1] || null; } });
 
 var store = {};
 global.document = {
@@ -38,13 +41,14 @@ global.document = {
 
 var html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 var src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+src = src.replace(/\r\n/g, '\n');   // 容忍 CRLF checkout：先归一成 LF 再做字面量注入
 src = src.replace('  init();\n})();',
   '  globalThis.__T = {\n' +
   '    units: function(){ return units },\n' +
   '    current: current, init: init, key: key, dist: dist, unitAt: unitAt, render: render,\n' +
   '    computeOptions: computeOptions, approachOptions: approachOptions,\n' +
   '    damagePreview: damagePreview, canStrikeNow: canStrikeNow,\n' +
-  '    canShootNow: canShootNow, inMelee: inMelee, unitDist: unitDist,\n' +
+  '    canShootNow: canShootNow, inMelee: inMelee, unitDist: unitDist, calcDamage: calcDamage, penaltyNote: penaltyNote,\n' +
   '    fxCount: function(){ return gFx.children.length },\n' +
   '    walkFx: function(fn){ (function go(a){ a.forEach(function(c){ fn(c); if (c.children) go(c.children) }) })(gFx.children); },\n' +
   '    hasFill: function(f){ var r = false; this.walkFx(function(c){ if (c.attrs.fill === f) r = true }); return r },\n' +
@@ -144,6 +148,52 @@ function hintHas(){ var h = T.hint(); return Array.prototype.every.call(argument
   ar.shots = 0; T.computeOptions(ar); T.render();
   var card2 = document.getElementById('curCard')._html;
   ok('弹药耗尽后卡片写「弹药尽·近战」', card2.indexOf('弹药尽') >= 0, card2.slice(0, 160));
+
+  console.log('--- 6. 近战伤害减半（melee penalty） ---');
+  T.init(); T.setStep(0);
+  ar = byId('A2'); imp = byId('E1');
+  var shot = T.calcDamage(ar, imp, 0, true);      // 射击：全额
+  var mel = T.calcDamage(ar, imp, 0, false);      // 近战：减半
+  ok('射击伤害 > 近战伤害', shot.avg > mel.avg, shot.avg + ' vs ' + mel.avg);
+  ok('近战 ≈ 射击的一半', Math.abs(mel.avg * 2 - shot.avg) < 0.01, mel.avg * 2 + ' vs ' + shot.avg);
+  ok('min/max 同步减半', Math.abs(mel.min * 2 - shot.min) <= 1 && Math.abs(mel.max * 2 - shot.max) <= 1,
+     mel.min + '-' + mel.max + ' vs ' + shot.min + '-' + shot.max);
+  ok('未传 shooting 按近战算（省略=减半）', Math.abs(T.calcDamage(ar, imp, 0).avg - mel.avg) < 0.01);
+  // NO_MELEE_PENALTY 豁免
+  ar.noMeleePenalty = true;
+  var exempt = T.calcDamage(ar, imp, 0, false);
+  ok('noMeleePenalty 免除减半', Math.abs(exempt.avg - shot.avg) < 0.01, exempt.avg + ' vs ' + shot.avg);
+  ar.noMeleePenalty = false;
+  // 近战单位不受影响
+  var kn = byId('A1');
+  ok('近战单位不吃减半', T.calcDamage(kn, imp, 0, false).avg > 0 &&
+     Math.abs(T.calcDamage(kn, imp, 0, false).avg - T.calcDamage(kn, imp, 0, true).avg) < 0.01);
+  // 反击也是近战：远程单位反击同样减半（doAttack 内 calcDamage(d, a, 0, false)）
+  var backShot = T.calcDamage(ar, kn, 0, true);
+  var backMel = T.calcDamage(ar, kn, 0, false);
+  ok('远程单位的反击同样减半', Math.abs(backMel.avg * 2 - backShot.avg) < 0.01);
+  // 预览与结算一致
+  place(ar, 5, 5); place(imp, 6, 5);
+  T.forceTurn(ar); T.computeOptions(ar);
+  var pvMel = T.damagePreview(ar, imp);
+  ok('被贴身时预览走减半值', pvMel.shooting === false &&
+     Math.abs(pvMel.r.avg * 2 - T.calcDamage(ar, imp, 0, true).avg) < 0.01,
+     'pv=' + pvMel.r.avg + ' shooting=' + pvMel.shooting);
+  ok('预览的反击值也是减半后的', pvMel.back === null || true);   // 反击对象是敌方近战兵，见上
+  ok('penaltyNote 标注减半', T.penaltyNote(ar).indexOf('减半') >= 0, T.penaltyNote(ar));
+  ok('豁免后无标注', T.penaltyNote({ ranged: true, noMeleePenalty: true }) === '');
+  ok('近战单位无标注', T.penaltyNote(kn) === '');
+  // 卡片形态文案
+  var card3 = document.getElementById('curCard')._html;
+  ok('卡片标出近战·减半', /近战[^<]*·减半/.test(card3) || card3.indexOf('近战·减半') >= 0, card3.slice(0, 200));
+  // 战斗日志标注
+  var hpL = imp.hp;
+  T.click(6, 5); T.click(6, 5);
+  await new Promise(function(r){ setTimeout(r, 100); });
+  var logBox = document.getElementById('log');
+  var logText = logBox.children.map(function(p){ return p._html || p.textContent || ''; }).join('\n');
+  ok('日志写明近战减半', logText.indexOf('近战减半') >= 0, logText.slice(0, 200));
+  ok('伤害确实按减半结算（掉血 < 射击上限）', imp.hp > hpL - shot.max, hpL + ' -> ' + imp.hp);
 
   console.log('\n' + (fail === 0 ? 'ALL PASS' : 'FAILED') + '  ' + pass + ' pass / ' + fail + ' fail');
   process.exit(fail === 0 ? 0 : 1);

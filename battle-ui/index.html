@@ -163,6 +163,7 @@
     flex-direction:column;align-items:center;justify-content:center;gap:10px;border-radius:14px}
   .over h2{margin:0;font-size:20px;font-weight:500}
   .over p{margin:0;color:var(--ink2);font-size:13px}
+  .over .rep{font-size:12px;color:var(--ink3);max-width:86%;text-align:center;line-height:1.7}
   .over button{flex:0 0 auto;padding:8px 20px}
 </style>
 </head>
@@ -171,6 +172,8 @@
   <div class="topbar">
     <div class="round">回合 <b id="roundNo">1</b></div>
     <div class="queue" id="queue"></div>
+    <button id="btnAuto" style="flex:0 0 auto" title="自动战斗 / 接管（原版 Auto Combat：A 键切换）">自动战斗</button>
+    <button id="quick" style="flex:0 0 auto" title="原版 Quick Combat：不进战斗画面直接结算">快速战斗</button>
     <button id="restart" style="flex:0 0 auto">重开</button>
   </div>
 
@@ -340,7 +343,7 @@
   // breath: 龙息 —— 命中目标后，沿攻击方向再打一格（原版 TWO_HEX_ATTACK_BREATH）
   // size: 2 = 原版双格生物（横向占两格，尾格固定朝"背后"：我方在左、敌方在右）
   var ROSTER = [
-    {id:"A1", side:"us",   name:"枪兵",   glyph:"枪", count:60, perHp:10, att:4,  def:5,  dmg:[1,3],   speed:4,  x:1, y:5},
+    {id:"A1", side:"us",   name:"枪兵",   glyph:"枪", count:60, perHp:10, att:4,  def:5,  dmg:[1,3],   speed:4,  x:1, y:5, pikeman:true},
     {id:"A2", side:"us",   name:"弓箭手", glyph:"弓", count:40, perHp:10, att:6,  def:3,  dmg:[2,3],   speed:4,  x:0, y:2, ranged:true, shots:12},
     {id:"A3", side:"us",   name:"狮鹫",   glyph:"狮", count:12, perHp:25, att:8,  def:8,  dmg:[3,6],   speed:6,  x:1, y:8, size:2},
     {id:"A4", side:"us",   name:"骑士",   glyph:"骑", count:10, perHp:40, att:10, def:9,  dmg:[7,12],  speed:7,  x:2, y:3, joust:true, size:2},
@@ -358,6 +361,29 @@
   var approachMode = null;    // {target} 正在为哪个目标挑落脚格
   var chosenApproach = null;  // "x,y" 手动选中的落脚格
   var lastHoverId = null;     // 上一次悬停的单位，用于重置手动选的落脚格
+  var quickMode = false;      // 快速战斗：双方全交 AI、计时压缩到 0，打完出战报
+                              // （原版 Quick Combat：不进战斗画面直接结算，见 参考资料.md §2.7）
+  var wantQuick = false;      // 下一场是否用快速战斗（战报上的两个按钮决定）
+  var autoMode = false;       // 自动战斗：我方也交 AI，但正常播动画，随时可接管
+                              // （原版 Auto Combat：战斗画面内开关，A 键切换，见 参考资料.md §2.7）
+  var wantAuto = false;       // 下一场是否自动战斗
+
+  // 游戏流程计时统一走这里，quickMode 下全部压成 0（画面特效不受影响，仍走原生 setTimeout）。
+  // 全部登记进 flowTimers：init（重开/换模式）时清干净——旧战斗挂着的 aiAct 若在新战斗里
+  // 触发，会抢走 turnClaimed 把新的一手卡死（_probe13 实测到的 stall）。
+  var flowTimers = [];
+  function later(fn, ms) {
+    var id = setTimeout(function(){
+      flowTimers = flowTimers.filter(function(x){ return x !== id; });
+      fn();
+    }, quickMode ? 0 : ms);
+    flowTimers.push(id);
+    return id;
+  }
+  function clearFlowTimers() {
+    for (var i = 0; i < flowTimers.length; i++) clearTimeout(flowTimers[i]);
+    flowTimers = [];
+  }
 
   svg.addEventListener("pointerdown", function(e){
     lastPT = (e && e.pointerType) || "mouse";
@@ -597,6 +623,7 @@
       u.maxShots = t.shots || 0;
       u.maxHp = t.count * t.perHp;
       u.hp = u.maxHp;
+      u.startCount = t.count;   // 战报用：开局编制
       u.dead = false;
       u.retaliated = false;
       u.defending = false;
@@ -637,6 +664,12 @@
     }
     if (!order.length) {
       if (!alive("us").length || !alive("them").length) return finish();
+      if ((quickMode || autoMode) && roundNo >= 50) {   // 兜底：双方都够不着时按剩余 HP 判，别无限打转
+        var usHp = alive("us").reduce(function(s,u){return s+u.hp;},0);
+        var themHp = alive("them").reduce(function(s,u){return s+u.hp;},0);
+        log("超过 50 回合未分胜负，按剩余兵力判定", "sys");
+        return finish(usHp >= themHp ? "us" : "them");
+      }
       roundNo++;
       document.getElementById("roundNo").textContent = roundNo;
       startRound();
@@ -645,22 +678,41 @@
     var act = current();
     restFace(act);                       // 轮到这个单位：先把头摆向敌人（默认站位）
     selected = null; hasMoved = false; moveMap = new Map(); atkSet = new Set();
+    turnClaimed = false;      // 新的一手：清掉"谁来执行"的去重标志
     pendingAttack = null; hoverUnit = null;
     approachMode = null; chosenApproach = null; lastHoverId = null;
-    if (act.side === "us") {
-      selected = act;
-      computeOptions(act);
-      var st = "";
-      if (act.ranged) {
-        st = (act.shots || 0) === 0 ? "（弹药耗尽，只能近战）"
-           : inMelee(act) ? "（被贴身，只能近战）" : "（可射击）";
-      }
-      setHint("行动：" + act.name + " × " + act.count + " · 点蓝格移动，或点敌人挑选进攻位置" +
-        (act.breath ? "（龙息会打穿目标）" : "") + st);
+    if (act.side === "us" && !quickMode && !autoMode) {
+      playerTurn(act);
     } else {
-      setHint("敌方 " + act.name + " 行动中…");
-      setTimeout(function(){ aiAct(act); }, 480);
+      setHint((act.side === "us" ? "自动战斗 · " : (quickMode ? "" : "敌方 ")) + act.name + " 行动中…");
+      later(function(){
+        // 过期回调防御：这一手可能已经易主（接管/重开/交棒），只认"当前单位"
+        if (act !== current() || act.dead || over) return;
+        // 决策点：AI 还没开动前玩家点了接管 → 这一手直接交还手动
+        if (act.side === "us" && !quickMode && !autoMode) { playerTurn(act); return; }
+        if (turnClaimed) return;
+        turnClaimed = true;
+        aiAct(act);
+      }, 480);
     }
+    render();
+  }
+
+  // 把当前单位的控制权交给玩家（开局手操与中途接管都走这里）
+  var turnClaimed = false;    // 一手只允许一个执行者（AI 或玩家），防双重派发
+  function playerTurn(act) {
+    // 过期回调防御：只认"当前单位"，旧一手的残留回调不许认领新的一手
+    if (!act || act.dead || over || turnClaimed || act !== current()) return;
+    turnClaimed = true;
+    selected = act;
+    computeOptions(act);
+    var st = "";
+    if (act.ranged) {
+      st = (act.shots || 0) === 0 ? "（弹药耗尽，只能近战" + penaltyNote(act) + "）"
+         : inMelee(act) ? "（被贴身，只能近战" + penaltyNote(act) + "）" : "（可射击）";
+    }
+    setHint("行动：" + act.name + " × " + act.count + " · 点蓝格移动，或点敌人挑选进攻位置" +
+      (act.breath ? "（龙息会打穿目标）" : "") + st);
     render();
   }
 
@@ -676,7 +728,7 @@
   function endActorSoon(delay) {
     if (settling) return;
     settling = true;
-    setTimeout(function(){
+    later(function(){
       settling = false;
       // 出手时那个扭头是临时的：这一手结束就回到待机姿态（头朝敌人）
       restFace(current());
@@ -724,17 +776,69 @@
     });
   }
 
+  // 防御指令：原版是防御值 +20%（不是 +30%，见 参考资料.md §2.6）
   function effDef(u) {
-    return u.defending ? u.def * 1.3 : u.def;
+    return u.defending ? u.def * 1.2 : u.def;
   }
 
-  function calcDamage(a, d, joustHexes) {
-    var avg = (a.dmg[0] + a.dmg[1]) / 2;
-    var base = a.count * avg;
-    if (a.joust && joustHexes) base *= (1 + 0.05 * joustHexes);
+  // 近战减半的提示后缀：远程单位近战出手时伤害 ×0.5，界面上要直说
+  function penaltyNote(a) {
+    return (a && a.ranged && !a.noMeleePenalty) ? "·伤害减半" : "";
+  }
+
+  /* 伤害公式 —— 对齐原版（heroes.thelazy.net/index.php/Damage，Table 1）：
+       DMGf = DMGb × (1+I1+I4+I5) × (1-R1) × (1-R5)
+       DMGb = 基础伤害：每只生物在 [dmg0,dmg1] 掷一个整数求和；
+              超过 10 只时只掷 10 颗、和 × N/10 向下取整。
+       I1 = 0.05×(攻-防)  正差封顶 +300%（差 ≥60 起按 3 算）→ 括号最高 4.0
+       I4 = 1.00          幸运一击触发时（原版 I4，加法不是乘法）
+       I5 = 0.05×冲锋格数 骑兵/骑士的 joust；对手是枪兵/戟兵时无效
+       R1 = 0.025×(防-攻) 负差封底 -70%（差 ≥28 起按 0.7 算）→ 整体最低 0.3
+       R5 = 0.5           远程单位被迫近战（melee penalty，NO_MELEE_PENALTY 可免）
+     关键：I1/I4/I5 在同一括号里相加，不是各自相乘。
+     近战减半与反击：反击永远按近战算，远程单位反击同样减半。 */
+  function dmgMult(a, d, joustHexes, shooting, lucky) {
     var diff = a.att - effDef(d);
-    var mult = diff >= 0 ? Math.min(3, 1 + 0.05 * diff) : Math.max(0.3, 1 - 0.025 * (-diff));
-    return { min: Math.round(base * Math.max(0.3, mult * 0.85)), max: Math.round(base * mult), avg: base * mult };
+    var I1 = diff > 0 ? Math.min(3, 0.05 * diff) : 0;
+    var R1 = diff < 0 ? Math.min(0.7, 0.025 * -diff) : 0;
+    var I5 = (a.joust && joustHexes && !d.pikeman) ? 0.05 * joustHexes : 0;
+    var m = (1 + I1 + (lucky ? 1 : 0) + I5) * (1 - R1);
+    if (a.ranged && !shooting && !a.noMeleePenalty) m *= 0.5;
+    return m;
+  }
+
+  function calcDamage(a, d, joustHexes, shooting, lucky) {
+    var m = dmgMult(a, d, joustHexes, shooting, lucky);
+    return {
+      min: Math.floor(a.count * a.dmg[0] * m),
+      max: Math.floor(a.count * a.dmg[1] * m),
+      avg: a.count * (a.dmg[0] + a.dmg[1]) / 2 * m
+    };
+  }
+
+  // DMGb 的真实掷骰（不是在 min–max 之间均匀抽一个数）
+  function rollBase(a) {
+    var n = a.count, lo = a.dmg[0], hi = a.dmg[1], s = 0, i;
+    if (n <= 10) {
+      for (i = 0; i < n; i++) s += lo + Math.floor(Math.random() * (hi - lo + 1));
+      return s;
+    }
+    for (i = 0; i < 10; i++) s += lo + Math.floor(Math.random() * (hi - lo + 1));
+    return Math.floor(s * n / 10);
+  }
+
+  // 幸运检定：+N → N/24 概率触发幸运一击（+1=1/24 … +3=1/8）。
+  // 负幸运（HotA 才有）不实现；幸运值来自 u.luck，默认 0（英雄/宝物层尚未建模）。
+  function rollLuck(a) {
+    var L = (a && a.luck) || 0;
+    return L > 0 && Math.floor(Math.random() * 24) < L;
+  }
+
+  // 一次真实伤害：掷基础骰 + 幸运检定；lucky 传入时复用该次判定（龙息第二目标）
+  function rollDamage(a, d, joustHexes, shooting, lucky) {
+    if (lucky === undefined) lucky = rollLuck(a);
+    var m = dmgMult(a, d, joustHexes, shooting, lucky);
+    return { amount: Math.floor(rollBase(a) * m), lucky: !!lucky };
   }
 
   function applyDamage(target, amount) {
@@ -1045,19 +1149,21 @@
       u.dir = fitDir(u, u.x, u.y, u) || dirOf(u);
       i++;
       render();
-      setTimeout(tick, stepDelay);
+      later(tick, stepDelay);
     })();
   }
 
   function doAttack(a, d, steps, shooting) {
-    // 兼容直接调用（测试/重放）：没显式说明射击与否，就按"远程且有弹药"推断
-    if (shooting === undefined) shooting = !!a.ranged && (a.shots || 0) > 0;
+    // 兼容直接调用（测试/重放）：没显式说明射击与否，就按"远程 + 有弹药 + 没被贴身"推断
+    // （贴身时哪怕有弹药也是近战，伤害要走减半——推断错了会把近战算成射击）
+    if (shooting === undefined) shooting = !!a.ranged && (a.shots || 0) > 0 && !inMelee(a);
     // 出手前把头扭向目标：占位不变，只是换哪一格当"头"
     if (!shooting) faceTarget(a, d);
     var from = { x: a.x, y: a.y, dir: dirOf(a) };
     var bt = breathInfo(a, from, d, steps || 0);
-    var roll = calcDamage(a, d, steps || 0);
-    var amount = Math.round(roll.min + Math.random() * (roll.max - roll.min));
+    // 真实掷骰：DMGb 逐只掷 + 幸运检定（一次攻击共用一次检定，龙息第二目标同样受益）
+    var hit = rollDamage(a, d, steps || 0, shooting);
+    var amount = hit.amount, lucky = hit.lucky;
     var before = d.count;
     var melee = !shooting;
     var hitAt = melee ? 150 : 250;                                   // 视觉命中帧
@@ -1075,8 +1181,10 @@
     if (bt && bt.unit) fxBreath(from, bt.hex);
 
     applyDamage(d, amount);
-    log("<b>" + a.name + "</b> 攻击 <b>" + d.name + "</b> · 造成 " + amount +
-        " 伤害，击杀 " + (before - d.count) + "（剩 " + d.count + "）", a.side);
+    log("<b>" + a.name + "</b> " + (shooting ? "射击" : "攻击") + " <b>" + d.name + "</b> · 造成 " + amount +
+        " 伤害" + (lucky ? "（幸运一击）" : "") +
+        (!shooting && a.ranged && !a.noMeleePenalty ? "（近战减半）" : "") +
+        "，击杀 " + (before - d.count) + "（剩 " + d.count + "）", a.side);
 
     setTimeout(function(){
       if (melee) fxSlash(d.x, d.y, ang + 90, tint);
@@ -1089,13 +1197,16 @@
       if (quake) fxShake();
     }, hitAt);
 
-    // 龙息：目标身后那格一起烧，不额外反击；原版连友军也照打
+    // 龙息：目标身后那格一起烧，不额外反击；原版连友军也照打。
+    // 幸运判定按 HotA 语义作用于本次攻击的每个受击目标（lucky 复用同一检定）。
     if (bt && bt.unit) {
       var bu = bt.unit;
-      var bAmt = Math.round(bt.r.min + Math.random() * (bt.r.max - bt.r.min));
+      var bHit = rollDamage(a, bu, steps || 0, false, lucky);
+      var bAmt = bHit.amount;
       var bBefore = bu.count, bFriend = bu.side === a.side;
       applyDamage(bu, bAmt);
-      log("<b>龙息</b> 波及 <b>" + bu.name + "</b> · 造成 " + bAmt + " 伤害，击杀 " +
+      log("<b>龙息</b> 波及 <b>" + bu.name + "</b> · 造成 " + bAmt + " 伤害" +
+          (bHit.lucky ? "（幸运一击）" : "") + "，击杀 " +
           (bBefore - bu.count) + (bFriend ? "（友军，龙息不辨敌我）" : ""), a.side);
       setTimeout(function(){
         fxBurst(bu.x, bu.y, "#e08a3c", 0.9);
@@ -1106,6 +1217,7 @@
       if (bu.dead) {
         log("<b>" + bu.name + "</b> 被消灭", "sys");
         setTimeout(function(){ removeUnitEl(bu); }, hitAt + 120);
+        checkEnd();          // 龙息单独致死也要收尾，否则战斗挂住不结束
       }
     }
 
@@ -1117,18 +1229,19 @@
     }
     if (!shooting && !d.retaliated && unitDist(a, d) === 1) {
       d.retaliated = true;
-      var back = calcDamage(d, a, 0);
-      var bAmt = Math.round(back.min + Math.random() * (back.max - back.min));
+      // 反击永远是近战：远程单位反击同样减半；反击自己也做幸运检定
+      var back = rollDamage(d, a, 0, false);
+      var bAmt = back.amount;
       var bBefore = a.count;
       var backAng = Math.atan2(a.y - d.y, a.x - d.x) * 180 / Math.PI;
       applyDamage(a, bAmt);
-      setTimeout(function(){
+      later(function(){
         fxLunge(d, a.x, a.y);
         fxSlash(a.x, a.y, backAng + 90, "#ffc9c0");
         fxBurst(a.x, a.y, "#d98b7c", 0.9);
         floatText(a.x, a.y, "-" + bAmt, a.side === "us" ? "them" : "us", bAmt >= a.maxHp * 0.2);
         animateHit(a);
-        log("<b>" + d.name + "</b> 反击 · 造成 " + bAmt + " 伤害，击杀 " + (bBefore - a.count), d.side);
+        log("<b>" + d.name + "</b> 反击 · 造成 " + bAmt + " 伤害" + (back.lucky ? "（幸运一击）" : "") + "，击杀 " + (bBefore - a.count), d.side);
         if (a.dead) { log("<b>" + a.name + "</b> 被消灭", "sys"); removeUnitEl(a); }
         render(); checkEnd();
       }, 300);
@@ -1146,7 +1259,9 @@
   function onHexClick(ev) {
     var x = +ev.currentTarget.dataset.x, y = +ev.currentTarget.dataset.y;
     var act = current();
-    if (!act || over || busy) return;
+    // 自动战斗中点战场 = 立即接管（"随时打断"的第一个动作就是点一下）
+    if (autoMode && !over) { takeover(); return; }
+    if (!act || over || busy || quickMode) return;
 
     // H3 的节奏：一个单位一次动作。点空地走完就交棒，点敌人打完也交棒，
     // 不存在"走完再补一刀"这种原版没有的第二动作。
@@ -1183,8 +1298,8 @@
       if (!atkSet.has(key(target.x, target.y))) {
         var why = "";
         if (act.ranged) {
-          if ((act.shots || 0) === 0) why = "（弹药耗尽，只能近战）";
-          else if (inMelee(act)) why = "（被贴身，只能近战）";
+          if ((act.shots || 0) === 0) why = "（弹药耗尽，只能近战" + penaltyNote(act) + "）";
+          else if (inMelee(act)) why = "（被贴身，只能近战" + penaltyNote(act) + "）";
         }
         setHint(target.name + " · 距离 " + unitDist(act, target) + " 格" + why + " —— 打不到");
         log("目标超出本回合行动范围", "sys");
@@ -1279,7 +1394,7 @@
 
   // 鼠标扫到六边形：如果它是候选落脚格，就切到这一格
   function onHexHover(x, y) {
-    if (over) return;
+    if (over || quickMode || autoMode) return;
     var act = current();
     if (!act) return;
     if (hasMoved) return;           // 动作已用掉，这一手马上交棒，别再出预览
@@ -1309,11 +1424,13 @@
     var pv = damagePreview(act, t, sp);
     if (opts.length === 1) {
       return "点击 " + t.name + " 由 (" + sp.x + "," + sp.y + ") 发起攻击 · 预计 " +
-        pv.r.min + "–" + pv.r.max + (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "");
+        pv.r.min + "–" + pv.r.max + (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "") +
+        (pv.shooting ? "" : penaltyNote(act));
     }
     return t.name + " × " + t.count + " · " + opts.length + " 个位置可选 · 当前 (" +
       sp.x + "," + sp.y + ") " + sp.cost + " 步 → 伤害 " + pv.r.min + "–" + pv.r.max +
       (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "") +
+      (pv.shooting ? "" : penaltyNote(act)) +
       breathText(pv, act) +
       (lastPT === "touch" ? " · 点一个格子从此处出手" : " · 扫格子比较，点格子直接出手");
   }
@@ -1360,7 +1477,7 @@
         if (!bc) return;
         tx = bc[1]; ty = bc[2]; steps = bc[0];
       }
-      var est = calcDamage(u, f, steps).avg;
+      var est = calcDamage(u, f, steps, aiCanShoot && steps === 0).avg;
       if (!best || est > best.est) best = { f: f, est: est, tx: tx, ty: ty, steps: steps };
     });
 
@@ -1416,17 +1533,32 @@
     var box = document.getElementById("field");
     var d = document.createElement("div");
     d.className = "over";
-    d.innerHTML = "<h2>" + (winner === "us" ? "战斗胜利" : "战斗失败") + "</h2>" +
+    // 战报：逐队列出开局编制 → 战后余编（快速战斗的主交付物）
+    var sideRep = function(side){
+      return units.filter(function(u){ return u.side === side; }).map(function(u){
+        return u.name + " " + u.startCount + "→" + u.count + (u.dead ? "（全灭）" : "");
+      }).join(" · ");
+    };
+    d.innerHTML = "<h2>" + (winner === "us" ? "战斗胜利" : "战斗失败") +
+      (quickMode ? " · 快速结算" : autoMode ? " · 自动战斗" : "") + "</h2>" +
       "<p>共 " + roundNo + " 回合 · 我军伤亡 " +
       Math.round(100 - 100 * alive("us").reduce(function(s,u){return s+u.hp;},0) /
       Math.max(1, units.filter(function(u){return u.side==="us";}).reduce(function(s,u){return s+u.maxHp;},0))) + "%</p>" +
-      "<button class=\"primary\" id=\"again\">再来一场</button>";
+      "<p class=\"rep\">我方：" + sideRep("us") + "</p>" +
+      "<p class=\"rep\">敌方：" + sideRep("them") + "</p>" +
+      "<button id=\"againManual\">手动重打</button>" +
+      "<button id=\"againAuto\">自动再来</button>" +
+      "<button class=\"primary\" id=\"againQuick\">快速再来</button>";
     box.appendChild(d);
-    document.getElementById("again").addEventListener("click", init);
+    // 手动重打 = 混合路线的"不服再战"：同阵容进棋盘自己打
+    document.getElementById("againManual").addEventListener("click", startManual);
+    document.getElementById("againAuto").addEventListener("click", startAuto);
+    document.getElementById("againQuick").addEventListener("click", startQuick);
     document.getElementById("btnDefend").disabled = true;
     document.getElementById("btnWait").disabled = true;
     pendingAttack = null;
     hoverUnit = null;
+    syncAutoBtn();
     render();
   }
 
@@ -1644,7 +1776,7 @@
     if (!h) return null;
     var u = unitAt(h[0], h[1]);
     if (!u || u.dead || u === act || coversHex(t, h[0], h[1])) u = null;
-    return { hex: h, unit: u, r: u ? calcDamage(act, u, steps) : null };
+    return { hex: h, unit: u, r: u ? calcDamage(act, u, steps, false) : null };
   }
 
   // 提示条用的一句话龙息说明
@@ -1661,13 +1793,13 @@
     var onSelf = !!ap && coversHex(act, ap.x, ap.y);
     var shooting = canShootNow(act);
     var steps = (!shooting && ap && !onSelf) ? ap.cost : 0;
-    var r = calcDamage(act, t, steps);
+    var r = calcDamage(act, t, steps, shooting);
     var meets = !!ap && (function(){
       var cs = cellsOf(t), m = 99;
       for (var i = 0; i < cs.length; i++) m = Math.min(m, dist(ap.x, ap.y, cs[i][0], cs[i][1]));
       return m === 1;
     })();
-    var back = (!shooting && !t.retaliated && meets) ? calcDamage(t, act, 0) : null;
+    var back = (!shooting && !t.retaliated && meets) ? calcDamage(t, act, 0, false) : null;
     return {
       opts: opts, ap: ap, steps: steps, r: r, back: back, shooting: shooting,
       breath: breathInfo(act, { x: ap ? ap.x : act.x, y: ap ? ap.y : act.y,
@@ -1815,7 +1947,7 @@
       return {
         o: o,
         bi: onIt ? pv.breath : breathInfo(act, o, t, o.cost),
-        dmg: Math.round(calcDamage(act, t, o.cost).avg)
+        dmg: Math.round(calcDamage(act, t, o.cost, !!o.ranged).avg)
       };
     });
     var dmgs = rows.map(function(r){ return r.dmg; });
@@ -1933,7 +2065,8 @@
       pv.r.min + "–" + pv.r.max +
       (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : " · 无反击") +
       breathText(pv, act) +
-      (pv.shooting ? " · 射击" : (pv.ap ? " · 从 (" + pv.ap.x + "," + pv.ap.y + ") " + pv.steps + " 步" : ""));
+      (pv.shooting ? " · 射击" : " · 近战" + penaltyNote(act)) +
+      (pv.ap && !pv.shooting ? " · 从 (" + pv.ap.x + "," + pv.ap.y + ") " + pv.steps + " 步" : "");
     bar.classList.add("show");
   }
 
@@ -1996,14 +2129,14 @@
       // 站位是关键：有得选就先说"有几个站位"，具体方向点了再展开
       var pv = damagePreview(act, u);
       setHint(u.name + " × " + u.count + " · " + opts.length + " 个站位可选 · 点它展开" +
-        (pv.shooting ? "（射击）" : "（原地近战 " + pv.r.min + "–" + pv.r.max + breathText(pv, act) + "）"));
+        (pv.shooting ? "（射击）" : "（原地近战 " + pv.r.min + "–" + pv.r.max + penaltyNote(act) + breathText(pv, act) + "）"));
     } else if (canStrikeNow(act, u)) {
       var pv2 = damagePreview(act, u);
       setHint("对 " + u.name + " × " + u.count + "：预计 " + pv2.r.min + "–" + pv2.r.max +
         " · 击杀 " + pv2.kills +
         (pv2.back ? " · 反击 " + pv2.back.min + "–" + pv2.back.max : " · 无反击") +
         breathText(pv2, act) +
-        (pv2.shooting ? " · 射击" : " · 近战"));
+        (pv2.shooting ? " · 射击" : " · 近战" + penaltyNote(act)));
     } else {
       setHint(u.name + " × " + u.count + " · " + opts.length +
         " 个落脚格可达 · 点它选择从哪一侧进攻");
@@ -2064,7 +2197,9 @@
         '<div>攻 <b>' + act.att + '</b></div><div>防 <b>' + act.def + '</b></div>' +
         '<div>伤 <b>' + act.dmg[0] + '–' + act.dmg[1] + '</b></div><div>速 <b>' + act.speed + '</b></div>' +
         (act.ranged ? '<div>弹 <b>' + (act.shots || 0) + '/' + act.maxShots + '</b></div>' +
-          '<div>' + ((act.shots || 0) > 0 ? (inMelee(act) ? '被贴身·近战' : '远程') : '弹药尽·近战') + '</div>' : '') +
+          '<div>' + (canShootNow(act) ? '远程'
+            : ((act.shots || 0) === 0 ? '弹药尽·近战' : (inMelee(act) ? '被贴身·近战' : '移动后·近战'))) +
+          (canShootNow(act) || act.noMeleePenalty ? '' : '·减半') + '</div>' : '') +
         '</div>';
     } else {
       card.style.display = "none";
@@ -2072,7 +2207,7 @@
 
     renderQueue();
 
-    var myTurn = !!act && act.side === "us" && !over;
+    var myTurn = !!act && act.side === "us" && !over && !quickMode && !autoMode;
     var canChoose = myTurn && !hasMoved;      // 走过位就只能打或过去，防御/等待都作废
     document.getElementById("btnDefend").disabled = !canChoose;
     document.getElementById("btnWait").disabled = !canChoose;
@@ -2129,7 +2264,7 @@
     var act = current();
     if (!act || act.side !== "us" || hasMoved) return;
     act.defending = true;
-    log("<b>" + act.name + "</b> 原地防御（防御 +30%）", "us");
+    log("<b>" + act.name + "</b> 原地防御（防御 +20%）", "us");
     render();
     endActorSoon(200);
   });
@@ -2145,13 +2280,71 @@
     }
   });
 
-  document.getElementById("restart").addEventListener("click", init);
+  // 两个入口：手动（进棋盘自己打）/ 快速（双方 AI 代打、出战报）。
+  // stepDelay / FX_ON 是"这一场怎么打"的设置，只在这里动，
+  // init 不碰它（测试用 setStep 设同步走位，init 若重置会把设置冲掉）
+  function startManual() { wantQuick = false; wantAuto = false; stepDelay = 70; FX_ON = true; init(); }
+  function startQuick()  { wantQuick = true;  wantAuto = false; stepDelay = 0;  FX_ON = false; init(); }
+  function startAuto()   { wantQuick = false; wantAuto = true;  stepDelay = 70; FX_ON = true; init();
+    log("自动战斗：我方也由 AI 代打（原版 Auto Combat），随时点「接管」介入", "sys"); }
+
+  /* 接管 = 原版 Auto Combat 的开关（A 键 toggle）：
+     - AI 还在思考（决策未出手）→ 这一手直接归玩家；
+     - AI 已开动（走位/出手动画中）→ 这一手打完，从下一手起归玩家（动画不硬掐）。 */
+  function takeover() {
+    if (over || !autoMode) return;
+    autoMode = false;
+    wantAuto = false;
+    var act = current();
+    log("手动接管" + (act && act.side === "us" ? "：" + act.name + " 这一手归你" : "：从下一个我方单位起"), "sys");
+    if (act && act.side === "us" && !busy && !settling && !turnClaimed) {
+      playerTurn(act);          // AI 还没开动 → 立即交还这一手
+    } else {
+      setHint("已接管 · " + (act ? act.name + " 正在行动，下一手起由你操作" : "下一手起由你操作"));
+      render();
+    }
+    syncAutoBtn();
+  }
+
+  // 自动/接管 按钮：同一枚开关（原版就是 toggle），文案随状态变
+  function syncAutoBtn() {
+    var b = document.getElementById("btnAuto");
+    b.textContent = autoMode ? "接管" : "自动战斗";
+    b.disabled = !!over || !!quickMode;
+  }
+
+  document.getElementById("restart").addEventListener("click", startManual);
+  document.getElementById("quick").addEventListener("click", function(){
+    startQuick();
+    log("快速战斗：双方由 AI 代打（原版 Quick Combat 语义）", "sys");
+  });
+  document.getElementById("btnAuto").addEventListener("click", function(){
+    if (over) { startAuto(); return; }        // 战斗已结束 → 再来一场自动的
+    if (autoMode) { takeover(); return; }     // 自动中 → 接管
+    // 手动中 → 从现在起交给 AI（当前这一手也交出去）
+    autoMode = true; wantAuto = true;
+    log("自动战斗开启：我方交由 AI 代打，随时点「接管」介入", "sys");
+    var act = current();
+    // 不看 turnClaimed：玩家已认领的这一手要主动让给 AI，否则两边都不动会卡死
+    if (act && act.side === "us" && !busy && !settling) {
+      pendingAttack = null; approachMode = null; chosenApproach = null; hoverUnit = null;
+      turnClaimed = true;
+      aiAct(act);
+    }
+    syncAutoBtn();
+  });
 
   function init() {
+    clearFlowTimers();                  // 旧战斗的流程定时器一律作废
     var ov = document.querySelector(".over");
     if (ov) ov.remove();
     gUnit.innerHTML = "";
     gFx.innerHTML = "";
+    quickMode = wantQuick;
+    autoMode = wantAuto && !wantQuick;
+    turnClaimed = false;
+    busy = false;
+    settling = false;
     units = makeUnits();
     faceAll();                          // 开局站位：双格单位的头一律朝敌人
     roundNo = 1;
@@ -2166,9 +2359,10 @@
     approachMode = null; chosenApproach = null; lastHoverId = null;
     document.getElementById("roundNo").textContent = "1";
     document.getElementById("log").innerHTML = "";
-    document.getElementById("btnDefend").disabled = false;
-    document.getElementById("btnWait").disabled = false;
-    log("遭遇战开始 · 我方 4 队 vs 敌方 4 队", "sys");
+    document.getElementById("btnDefend").disabled = quickMode || autoMode;
+    document.getElementById("btnWait").disabled = quickMode || autoMode;
+    log((quickMode ? "快速战斗" : autoMode ? "自动战斗" : "遭遇战") + "开始 · 我方 5 队 vs 敌方 4 队", "sys");
+    syncAutoBtn();
     render();
     startRound();
   }

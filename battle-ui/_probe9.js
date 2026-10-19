@@ -22,7 +22,7 @@ El.prototype.setAttribute = function(k, v){ this.attrs[k] = String(v); if (k ===
 El.prototype.getAttribute = function(k){ return this.attrs[k]; };
 El.prototype.appendChild = function(c){ this.children.push(c); c.parentNode = this; return c; };
 El.prototype.insertBefore = function(c, ref){ var i = this.children.indexOf(ref); if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); c.parentNode = this; return c; };
-El.prototype.removeChild = function(c){ var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
+El.prototype.removeChild = function(c){ if (!c) return c; var i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); c.parentNode = null; return c; };
 El.prototype.addEventListener = function(t, fn){ (this.listeners[t] = this.listeners[t] || []).push(fn); };
 El.prototype.remove = function(){ if (this.parentNode) this.parentNode.removeChild(this); };
 El.prototype.querySelector = function(){ return null; };
@@ -31,6 +31,9 @@ Object.defineProperty(El.prototype, 'innerHTML', {
   set: function(v){ this._html = v; this.children = []; }
 });
 Object.defineProperty(El.prototype, 'offsetWidth', { get: function(){ return 0; } });
+// log() 裁日志用 box.lastChild / box.firstChild——桩必须提供，否则 removeChild(undefined) 抛错
+Object.defineProperty(El.prototype, 'firstChild', { get: function(){ return this.children[0] || null; } });
+Object.defineProperty(El.prototype, 'lastChild', { get: function(){ return this.children[this.children.length - 1] || null; } });
 
 var store = {};
 global.document = {
@@ -42,6 +45,7 @@ global.document = {
 
 var html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 var src = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+src = src.replace(/\r\n/g, '\n');   // 容忍 CRLF checkout：先归一成 LF 再做字面量注入
 src = src.replace('  init();\n})();',
   '  globalThis.__T = {\n' +
   '    units: function(){ return units }, byId: function(id){ return units.filter(function(u){return u.id===id})[0] },\n' +

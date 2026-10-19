@@ -1,0 +1,12 @@
+# 仓库内源码统一 LF：测试注入按 LF 字面量匹配 index.html，CRLF 会让全部 _probe 失败
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.zip binary
+*.gz binary

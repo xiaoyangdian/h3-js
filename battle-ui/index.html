@@ -130,6 +130,23 @@
   .confirmbar .txt b{font-weight:500;color:#b8621f}
   .confirmbar button{flex:0 0 auto;padding:8px 14px}
 
+  /* 英雄数值容器：只给部队与规则供数，不参与任何战斗判定 */
+  .heroes{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
+  .heroes .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink3);margin-bottom:5px}
+  .heroes .hd b{font-weight:500;color:var(--ink2);font-size:11px}
+  .hg{display:grid;grid-template-columns:26px repeat(6,1fr);gap:3px;align-items:center}
+  .hg + .hg{margin-top:3px}
+  .hg .hn{font-size:12px;color:var(--ink2)}
+  .hg .hh{font-size:10px;color:var(--ink3);text-align:center;line-height:1}
+  .hg input{
+    width:100%;box-sizing:border-box;font:11px/1.5 inherit;padding:1px 0;text-align:center;
+    border:1px solid var(--line);border-radius:5px;background:#fafbf6;color:var(--ink);
+    font-variant-numeric:tabular-nums;-moz-appearance:textfield;
+  }
+  .hg input:focus{outline:none;border-color:var(--ink3);background:#fff}
+  .hg input::-webkit-outer-spin-button,.hg input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+  .hg input.on{background:#fff4d8;border-color:#e0b855;font-weight:600}
+
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:12px;font-weight:500;color:var(--ink3)}
   .who{display:flex;align-items:center;gap:9px;margin-bottom:8px}
@@ -191,6 +208,7 @@
     </div>
 
     <aside>
+      <div class="heroes" id="heroBar"></div>
       <div class="card" id="curCard" style="display:none"></div>
       <div class="btns">
         <button id="btnDefend">防御</button>
@@ -353,6 +371,127 @@
     {id:"E3", side:"them", name:"哥革",   glyph:"哥", count:30, perHp:13, att:6,  def:4,  dmg:[2,4],   speed:4,  x:14, y:8, ranged:true, shots:12},
     {id:"E4", side:"them", name:"长角魔", glyph:"魔", count:6,  perHp:110,att:10, def:10, dmg:[7,12],  speed:5,  x:13, y:5}
   ];
+
+  /* ══════════════ 英雄数值容器 HEROES ══════════════
+     英雄薄层的第一步，只做**供数**：给部队和后续规则提供一个有来源的数值出处，
+     不做升级 / 经验 / 技能树 / 装备 / 属性成长，也没有英雄出现在棋盘上。
+
+     为什么先立这个：士气（+N→N/24）、战术（3/5/7 行）、魔法（力量=伤害与持续）
+     在原版全部由英雄提供，不先有容器，这三个切片就得各自编一份假数据再拆。
+
+     字段与消费方（出处见 参考资料.md §2.6 / §2.8）：
+       attack      加到每只生物的**攻击**上，进 I1 的攻防差（不是乘在伤害上）
+       defense     加到每只生物的**防御**上，进 R1 与反击
+       spellpower  魔法伤害与持续的乘子 —— 魔法切片读，当前只存
+       luck        幸运，+N → N/24 触发幸运一击（rollLuck 已在读 u.luck）
+       morale      士气，+N → N/24（好=行动后追加 / 坏=回合开始冻结）—— 士气切片读
+       tactics     战术等级 0/1/2/3 = 布阵 0/3/5/7 行 —— 战术切片读
+
+     默认全 0 = "没有英雄"。此时每支部队的 att/def 与引入英雄前逐位相同，
+     既有 14 套探针的断言一条都不受影响。 */
+  var HEROES = {
+    us:   { name: "我方英雄", attack: 0, defense: 0, spellpower: 0, luck: 0, morale: 0, tactics: 0 },
+    them: { name: "敌方英雄", attack: 0, defense: 0, spellpower: 0, luck: 0, morale: 0, tactics: 0 }
+  };
+
+  // 面板字段：key / 表头 / 悬浮说明 / 下界 / 上界（原版 luck·morale 是 -3…+3，tactics 0…3）
+  var HSTATS = [
+    ["attack",     "攻", "攻击：加到每只生物的攻击上，进 I1 攻防差",        0, 20],
+    ["defense",    "防", "防御：加到每只生物的防御上，进 R1 与反击",        0, 20],
+    ["spellpower", "力", "力量：魔法伤害与持续的乘子（魔法切片才读）",      0, 20],
+    ["luck",       "幸", "幸运：+N → N/24 触发幸运一击（+1…+3）",          -3, 3],
+    ["morale",     "士", "士气：+N → N/24，好/坏士气（士气切片才读）",      -3, 3],
+    ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片才读）", 0, 3]
+  ];
+
+  function heroOf(side) { return HEROES[side] || {}; }
+
+  /* 把英雄数值摊到一支部队上。baseAtt/baseDef 是 ROSTER 的裸值，必须分开存：
+     英雄加成是"加上去"的，反复调英雄值不能把加成累加进去。 */
+  function applyHeroStats(u) {
+    var h = heroOf(u.side);
+    u.att = (u.baseAtt || 0) + (h.attack || 0);
+    u.def = (u.baseDef || 0) + (h.defense || 0);
+    u.luck = h.luck || 0;
+    u.morale = h.morale || 0;
+    u.tactics = h.tactics || 0;
+    u.spellpower = h.spellpower || 0;
+  }
+
+  /* 改英雄数值并**立即**同步到场上部队（不重开一局，便于当场看伤害变化）。
+     返回 false 表示参数非法（未知阵营 / 未知字段 / 非数值）。 */
+  function setHero(side, stat, val) {
+    var h = HEROES[side];
+    if (!h || !Object.prototype.hasOwnProperty.call(h, stat) || stat === "name") return false;
+    var n = Number(val);
+    if (!isFinite(n)) return false;
+    var spec = null, i;
+    for (i = 0; i < HSTATS.length; i++) if (HSTATS[i][0] === stat) spec = HSTATS[i];
+    if (spec) n = Math.max(spec[3], Math.min(spec[4], Math.round(n)));
+    h[stat] = n;
+    if (units) units.forEach(function(u){ if (u.side === side) applyHeroStats(u); });
+    renderHeroBar();
+    if (units) render();
+    return true;
+  }
+
+  // 归零（探针每个用例之间用；等价于"场上没有英雄"）
+  function resetHeroes() {
+    Object.keys(HEROES).forEach(function(s){
+      var h = HEROES[s];
+      HSTATS.forEach(function(f){ h[f[0]] = 0; });
+    });
+    if (units) units.forEach(applyHeroStats);
+    renderHeroBar();
+    if (units) render();
+  }
+
+  function renderHeroBar() {
+    var bar = document.getElementById("heroBar");
+    if (!bar) return;
+    var h = '<div class="hd"><span>英雄</span><b>数值容器 · 只供数不升级</b></div>' +
+            '<div class="hg"><span></span>' +
+            HSTATS.map(function(f){ return '<span class="hh">' + f[1] + '</span>'; }).join("") +
+            '</div>';
+    ["us", "them"].forEach(function(side){
+      var hero = HEROES[side];
+      h += '<div class="hg"><span class="hn">' + (side === "us" ? "我方" : "敌方") + '</span>' +
+        HSTATS.map(function(f){
+          var v = hero[f[0]] || 0;
+          return '<input type="number" data-side="' + side + '" data-stat="' + f[0] +
+            '" min="' + f[3] + '" max="' + f[4] + '" step="1" value="' + v +
+            '" class="' + (v ? "on" : "") + '" title="' + f[2] + '">';
+        }).join("") + '</div>';
+    });
+    bar.innerHTML = h;
+  }
+
+  // 输入即生效（委托一次，innerHTML 重建不影响）
+  (function bindHeroBar(){
+    var bar = document.getElementById("heroBar");
+    if (!bar || !bar.addEventListener) return;
+    bar.addEventListener("input", function(e){
+      var t = e.target || {}, d = t.dataset || {};
+      if (!d.side || !d.stat) return;
+      setHero(d.side, d.stat, t.value);
+    });
+  })();
+
+  /* 测试契约补挂：探针在注入串里自建 globalThis.__T，这里在 init 时把新增内部引用补进去。
+     浏览器里没有 __T，直接跳过。这样加新导出面不必改 14 个探针文件的注入串
+     （注入锚点 `  init();\n})();` 的**字面形状**保持不变）。 */
+  function attachTestHooks() {
+    var box = (typeof globalThis !== "undefined") ? globalThis.__T : null;
+    if (!box || typeof box !== "object") return;
+    box.heroes = function(){ return HEROES; };
+    box.setHero = setHero;
+    box.resetHeroes = resetHeroes;
+    box.heroOf = heroOf;
+    box.heroStats = function(u) {
+      return { att: u.att, def: u.def, baseAtt: u.baseAtt, baseDef: u.baseDef,
+               luck: u.luck, morale: u.morale, tactics: u.tactics, spellpower: u.spellpower };
+    };
+  }
 
   /* ══════════════ 怪物图鉴 BESTIARY ══════════════
      "专门做怪物的那里"：特性、免疫、心智抗性按**物种**写在这，ROSTER 只管
@@ -720,6 +859,11 @@
       u.defending = false;
       // 特性一律查图鉴（怪物那边的唯一入口）；ROSTER 有 kind 就用 kind，没有就用 name
       applyTraits(u, t.kind || t.name);
+      // 英雄加成：ROSTER 的 att/def 是物种裸值，英雄的攻防直接加上去
+      // （原版 hero attack 是加在生物攻击值上的，不是乘在伤害上）
+      u.baseAtt = t.att;
+      u.baseDef = t.def;
+      applyHeroStats(u);
       // 双格单位的尾巴在哪一侧：-1 左 / +1 右。默认"背对敌人"，
       // 走路和出手时会按需要调头（见 fitDir / attackFace）
       u.dir = (t.side === "us") ? -1 : 1;
@@ -2585,6 +2729,8 @@
     document.getElementById("btnWait").disabled = quickMode || autoMode;
     log((quickMode ? "快速战斗" : autoMode ? "自动战斗" : "遭遇战") + "开始 · 我方 5 队 vs 敌方 4 队", "sys");
     syncAutoBtn();
+    renderHeroBar();
+    attachTestHooks();               // 测试契约补挂（浏览器里无 __T，直接跳过）
     render();
     startRound();
   }

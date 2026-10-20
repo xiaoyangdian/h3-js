@@ -134,6 +134,11 @@
   .heroes{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
   .heroes .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink3);margin-bottom:5px}
   .heroes .hd b{font-weight:500;color:var(--ink2);font-size:11px}
+  .heroes .hd .hbtn{
+    font:10px/1.3 inherit;padding:2px 6px;border:1px solid var(--line);border-radius:6px;
+    background:#fafbf6;color:var(--ink3);cursor:pointer;margin-left:5px;
+  }
+  .heroes .hd .hbtn:hover{border-color:var(--ink3);color:var(--ink);background:#fff}
   .hg{display:grid;grid-template-columns:26px repeat(8,1fr);gap:3px;align-items:center}
   .hg + .hg{margin-top:3px}
   .hg .hn{font-size:12px;color:var(--ink2)}
@@ -452,12 +457,28 @@
        morale      士气，+N → N/24（好=行动后追加 / 坏=回合开始冻结）
        tactics     战术等级 0/1/2/3 = 布阵 0/3/5/7 行 —— 战术切片（未做）
 
-     默认全 0 = "没有英雄"。此时每支部队的 att/def 与引入英雄前逐位相同，
-     既有探针的断言一条都不受影响。 */
-  var HEROES = {
-    us:   { name: "我方英雄", attack: 0, defense: 0, spellpower: 0, knowledge: 0, mastery: 0, luck: 0, morale: 0, tactics: 0 },
-    them: { name: "敌方英雄", attack: 0, defense: 0, spellpower: 0, knowledge: 0, mastery: 0, luck: 0, morale: 0, tactics: 0 }
+     **默认值 = 一个刚开局的英雄**（原型自定，见 DEFAULT_HERO）：攻 1 / 防 1 /
+     力 2 / 识 3 → 30 点法力，够放 3~6 个一级法术；幸·士·术 保持 0 是对的
+     （原版开局英雄没有幸运/士气加成，也没有战术技能）。
+     全 0 = "场上没有英雄"，那是 resetHeroes() 的测试基线，不是开局状态。 */
+  var DEFAULT_HERO = {
+    attack: 1, defense: 1, spellpower: 2, knowledge: 3,
+    mastery: 0, luck: 0, morale: 0, tactics: 0
   };
+
+  function makeHero(name) {
+    var h = { name: name, attack: 0, defense: 0, spellpower: 0, knowledge: 0,
+              mastery: 0, luck: 0, morale: 0, tactics: 0 };
+    return h;
+  }
+  function defaultHero() {
+    var h = makeHero("");
+    Object.keys(DEFAULT_HERO).forEach(function(k){ h[k] = DEFAULT_HERO[k]; });
+    return h;
+  }
+  var HEROES = { us: defaultHero(), them: defaultHero() };
+  HEROES.us.name = "我方英雄";
+  HEROES.them.name = "敌方英雄";
 
   // 面板字段：key / 表头 / 悬浮说明 / 下界 / 上界（原版 luck·morale 是 -3…+3，tactics 0…3）
   var HSTATS = [
@@ -489,7 +510,7 @@
   var castsThisRound = { us: 0, them: 0 };
 
   /* 战役层：只有天数 + 补给点。没地图不代表没建筑——城镇/魔泉/魔法泉照原版结算。 */
-  var CAMPAIGN = { day: 1, wellDay: 0, springWeek: 0, last: "" };
+  var CAMPAIGN = { day: 1, wellDay: 0, springWeek: 0, last: "", opened: false };
 
   // 原版 spell points 上限 = 10 × 知识（heroes.thelazy.net Knowledge：每点 +10 法力上限）
   function manaMax(side) { return 10 * (heroOf(side).knowledge || 0); }
@@ -586,12 +607,26 @@
     return true;
   }
 
-  // 归零（探针每个用例之间用；等价于"场上没有英雄"）
+  // 归零（探针每个用例之间用；等价于"场上没有英雄"，法力也一起归零）
   function resetHeroes() {
     Object.keys(HEROES).forEach(function(s){
       var h = HEROES[s];
       HSTATS.forEach(function(f){ h[f[0]] = 0; });
     });
+    eachSide(function(side){ mana[side] = 0; });
+    if (units) units.forEach(applyHeroStats);
+    renderHeroBar();
+    if (units) render();
+  }
+
+  /* 回到默认英雄（面板上的「默认」按钮）：不是"没有英雄"，是"刚开局"。
+     法力跟着新上限走满，否则面板点回来还是 0 蓝、法术书继续全灰。 */
+  function restoreDefaultHeroes() {
+    Object.keys(HEROES).forEach(function(s){
+      var d = defaultHero();
+      Object.keys(d).forEach(function(k){ if (k !== "name") HEROES[s][k] = d[k]; });
+    });
+    eachSide(function(side){ mana[side] = manaMax(side); });
     if (units) units.forEach(applyHeroStats);
     renderHeroBar();
     if (units) render();
@@ -600,7 +635,10 @@
   function renderHeroBar() {
     var bar = document.getElementById("heroBar");
     if (!bar) return;
-    var h = '<div class="hd"><span>英雄</span><b>数值容器 · 只供数不升级</b></div>' +
+    var h = '<div class="hd"><span>英雄</span>' +
+            '<b>数值容器 · 只供数不升级</b>' +
+            '<button class="hbtn" data-hero="default" title="回到默认英雄（攻 1 / 防 1 / 力 2 / 识 3，法力补满）">默认</button>' +
+            '</div>' +
             '<div class="hg"><span></span>' +
             HSTATS.map(function(f){ return '<span class="hh">' + f[1] + '</span>'; }).join("") +
             '</div>';
@@ -641,6 +679,7 @@
     // 战役补给：过夜 / 魔泉 / 魔法泉（都是纯逻辑函数，按钮只做转发）
     bar.addEventListener("click", function(e){
       var t = e.target || {}, d = t.dataset || {};
+      if (d.hero === "default") { restoreDefaultHeroes(); if (units) render(); return; }
       if (!d.rest) return;
       if (d.rest === "well") visitWell();
       else if (d.rest === "spring") visitSpring();
@@ -658,6 +697,9 @@
     box.heroes = function(){ return HEROES; };
     box.setHero = setHero;
     box.resetHeroes = resetHeroes;
+    box.defaultHero = defaultHero;
+    box.restoreDefaultHeroes = restoreDefaultHeroes;
+    box.DEFAULT_HERO = DEFAULT_HERO;
     box.heroOf = heroOf;
     box.heroStats = function(u) {
       return { att: u.att, def: u.def, baseAtt: u.baseAtt, baseDef: u.baseDef,
@@ -3659,6 +3701,12 @@
     settling = false;
     units = makeUnits();
     faceAll();                          // 开局站位：双格单位的头一律朝敌人
+    /* 战役开局：**只有第一次载入**按英雄知识把法力补满（原型自定——没有冒险地图，
+       总得有个起点）。之后每一场都不补，剩多少带多少。 */
+    if (!CAMPAIGN.opened) {
+      CAMPAIGN.opened = true;
+      eachSide(function(side){ mana[side] = manaMax(side); });
+    }
     /* 法力**不**在开战时回满：它是战役状态，上一场剩多少这一场就是多少。
        只按当前上限收口（魔法泉翻倍可以超上限，保留到花完为止）。 */
     eachSide(function(side){ if (manaOf(side) > manaCeil(side)) mana[side] = manaCeil(side); });

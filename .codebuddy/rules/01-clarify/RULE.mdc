@@ -82,7 +82,7 @@ provider:
 > 4. 改 `battle-ui/index.html`，[修改函数] `startRound`，回合开始处插入坏士气冻结判定，实现丢轮
 
 **探针同步（本仓库必写）：**
-> 5. 改 `battle-ui/_probe19.js`（新建），[新增断言] 12 条，覆盖战术布阵；同时 [修改断言] `_probe.js` 行动顺序相关 1 条
+> 5. 改 `battle-ui/_probe20.js`（新建），[新增断言] 12 条，覆盖战术布阵；同时 [修改断言] `_probe.js` 行动顺序相关 1 条
 
 **排查类：** 定位到具体函数名，不泛泛说"搜不到"：
 > 在 `index.html` 里定位 `damagePreview` 的预览伤害与实际结算不一致问题

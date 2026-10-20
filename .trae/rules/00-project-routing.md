@@ -19,12 +19,12 @@ provider:
 
 ## `[P2]` 仓库速览（主要开发目标）
 
-仓库：`https://github.com/xiaoyangdian/h3-js`。**只有 22 个跟踪文件**：一个单文件战斗原型 + 14 套探针 + 4 份文档。
+仓库：`https://github.com/xiaoyangdian/h3-js`。**只有 23 个跟踪文件**：一个单文件战斗原型 + 15 套探针 + 4 份文档。
 
 | 路径 | 技术栈 | 说明 |
 |---|---|---|
 | `battle-ui/index.html` | 原生 HTML + SVG + 单 `<script>` IIFE，**零依赖零构建** | 战斗原型本体，约 2.4k 行；15×11 六边形棋盘；直接双击打开 |
-| `battle-ui/_probe.js` … `_probe14.js` | 纯 Node（无 npm 依赖）+ 最小 DOM 桩 + 假时钟 | 14 套测试共 **460 项断言**；基线是"全过" |
+| `battle-ui/_probe.js` … `_probe15.js` | 纯 Node（无 npm 依赖）+ 最小 DOM 桩 + 假时钟 | 15 套测试共 **519 项断言**；基线是"全过" |
 | `参考资料.md` | Markdown | **出处台账**：每条"原版如是"钉到 来源 + commit/页码 + `文件:行` + 本地怎么验 |
 | `简化玩法设计.md` | Markdown | 玩法规则正文（含 §3.12 混合路线与三形态） |
 | `交接文档.md` | Markdown | 当前进度、待做路线（§3 待做表是本项目唯一 TODO 台账）、测试怎么跑 |

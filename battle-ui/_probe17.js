@@ -112,7 +112,7 @@ noMana();
 ok('默认（知识 0）法力上限 0', T.manaMax('us') === 0 && T.manaOf('us') === 0, T.manaMax('us'));
 prep(3, 0, 0);
 ok('知识 3 → 法力上限 30（每点 +10）', T.manaMax('us') === 30, T.manaMax('us'));
-ok('开战法力回满（原型自定）', T.manaOf('us') === 30, T.manaOf('us'));
+ok('设知识后满蓝（面板重设英雄；开战本身不补蓝，见 _probe18）', T.manaOf('us') === 30, T.manaOf('us'));
 T.setHero('us', 'mastery', 9);
 ok('精通钳在 0…2（9 → 2）', T.masteryOf('us') === 2, T.masteryOf('us'));
 T.setHero('us', 'mastery', -5);

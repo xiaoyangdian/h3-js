@@ -148,6 +148,16 @@
   .hg input.on{background:#fff4d8;border-color:#e0b855;font-weight:600}
   .heroes .mana{font-size:11px;color:var(--ink3);margin:4px 0 2px;letter-spacing:.2px}
   .heroes .mana b{color:#3b5d86;font-variant-numeric:tabular-nums}
+  /* 战役补给行：没有冒险地图时的"日子 + 建筑"模型 */
+  .heroes .sup{margin-top:7px;padding-top:6px;border-top:1px dashed var(--line)}
+  .heroes .sd{font-size:10px;color:var(--ink3);margin-bottom:4px}
+  .heroes .sd b{color:var(--ink2);font-variant-numeric:tabular-nums}
+  .heroes .sb{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+  .heroes .sb button{
+    font:10px/1.4 inherit;padding:3px 0;border:1px solid var(--line);border-radius:6px;
+    background:#fafbf6;color:var(--ink2);cursor:pointer;
+  }
+  .heroes .sb button:hover{border-color:var(--ink3);color:var(--ink);background:#fff}
 
   /* 法术书：只列已实现的法术，法力/本回合额度不足时置灰 */
   .spellbook{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
@@ -421,21 +431,83 @@
     ["attack",     "攻", "攻击：加到每只生物的攻击上，进 I1 攻防差",        0, 20],
     ["defense",    "防", "防御：加到每只生物的防御上，进 R1 与反击",        0, 20],
     ["spellpower", "力", "力量：法术伤害加项，也是法术持续回合数",          0, 20],
-    ["knowledge",  "识", "知识：每点 +10 最大法力（每场战斗回满）",          0, 20],
+    ["knowledge",  "识", "知识：每点 +10 最大法力；法力跨战斗保留，靠过夜/魔泉恢复", 0, 20],
     ["mastery",    "魔", "魔法精通 0=初级 1=中级 2=专家（原版按学派分别）",  0, 2],
     ["luck",       "幸", "幸运：+N → N/24 触发幸运一击（+1…+3）",          -3, 3],
     ["morale",     "士", "士气：+N → N/24，好/坏士气",                      -3, 3],
     ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片未做）", 0, 3]
   ];
 
-  /* 法力与每回合施法额度。原版这两样都挂在英雄身上，但它们是**战斗内状态**，
-     不属于「局外配置」，所以不塞进 HEROES（HEROES 跨重开保留，法力每战回满）。 */
+  /* ── 法力与每回合施法额度 ──
+     法力是**战役状态**，不是战斗内状态：这一场花掉的蓝，出了战斗还在。
+     出处（heroes.thelazy.net「Spell Point」「Magic Well」「Magic Spring」）：
+
+       · 上限 = 10 × 知识（Intelligence 未建模，故不额外加成）
+       · 每天自然恢复 **1 点**（"replenish one spell point per day"）
+       · 在有魔法行会的城镇里开始新的一天 → **回满**
+       · 魔泉 Magic Well → 回满，**每个英雄每天一次**
+         （"A second drink at the well in one day will not help you."）
+       · 魔法泉 Magic Spring / 魔法旋涡 Mana Vortex → 回满并**翻倍**，每周一次
+         （词条原例：Knowledge 4 → 上限 40、剩 14，访问后 80）
+
+     没有冒险地图，但「日子」和「建筑」这层语义照原版保留：见 CAMPAIGN 与 restDay()。
+     **战斗开始不补蓝**——原先的"每场回满"是错的（2026-10-20 用户指出后更正）。 */
   var mana = { us: 0, them: 0 };
   var castsThisRound = { us: 0, them: 0 };
 
+  /* 战役层：只有天数 + 补给点。没地图不代表没建筑——城镇/魔泉/魔法泉照原版结算。 */
+  var CAMPAIGN = { day: 1, wellDay: 0, springWeek: 0, last: "" };
+
   // 原版 spell points 上限 = 10 × 知识（heroes.thelazy.net Knowledge：每点 +10 法力上限）
   function manaMax(side) { return 10 * (heroOf(side).knowledge || 0); }
+  // 魔法泉可以把「当前法力」顶到 2×上限（词条原例 40 → 80），所以另设一个收口
+  function manaCeil(side) { return 2 * manaMax(side); }
   function manaOf(side) { return mana[side] || 0; }
+  function weekOf(day) { return Math.floor((day - 1) / 7) + 1; }
+
+  // 双方共用一个「营地」：没有地图，不建模"谁在哪座城"，补给动作对两边同时结算
+  function eachSide(fn) { ["us", "them"].forEach(function(side){ fn(side); }); }
+
+  /* 过一夜。where: "field" 野外（+1/天）| "town" 城镇（有魔法行会，回满）。
+     天数是全局的：两边英雄都要过夜，所以两边同时结算。 */
+  function restDay(where) {
+    var town = where === "town";
+    eachSide(function(side){
+      var cap = manaMax(side), cur = manaOf(side);
+      if (cur >= cap) return;                       // 到顶（或翻倍后高于上限）不增不减
+      mana[side] = town ? cap : cur + 1;
+    });
+    CAMPAIGN.day += 1;
+    CAMPAIGN.last = town ? "城镇过夜（回满）" : "野外过夜（+1）";
+    renderHeroBar();
+    return { ok: true, day: CAMPAIGN.day, us: manaOf("us"), them: manaOf("them") };
+  }
+
+  // 魔泉：回满，每个英雄每天一次。不消耗天数（访问发生在白天）。
+  function visitWell() {
+    if (CAMPAIGN.wellDay === CAMPAIGN.day) {
+      return { ok: false, why: "今天已经喝过魔泉（每个英雄每天一次）", day: CAMPAIGN.day };
+    }
+    CAMPAIGN.wellDay = CAMPAIGN.day;
+    eachSide(function(side){ mana[side] = Math.max(manaOf(side), manaMax(side)); });
+    CAMPAIGN.last = "魔泉（回满）";
+    renderHeroBar();
+    return { ok: true, day: CAMPAIGN.day, us: manaOf("us"), them: manaOf("them") };
+  }
+
+  /* 魔法泉 / 魔法旋涡：回满并翻倍 → 当前法力 = 2×上限。每周一次
+     （"The magic spring only regenerates once a week"）。 */
+  function visitSpring(which) {
+    var w = weekOf(CAMPAIGN.day), nm = (which === "vortex" ? "魔法旋涡" : "魔法泉");
+    if (CAMPAIGN.springWeek === w) {
+      return { ok: false, why: "这周已经用过" + nm + "（每周一次）", day: CAMPAIGN.day };
+    }
+    CAMPAIGN.springWeek = w;
+    eachSide(function(side){ mana[side] = manaCeil(side); });
+    CAMPAIGN.last = nm + "（翻倍）";
+    renderHeroBar();
+    return { ok: true, day: CAMPAIGN.day, us: manaOf("us"), them: manaOf("them") };
+  }
   // 精通：0 初级 / 1 中级 / 2 专家（原版按学派，原型一个全局值）
   function masteryOf(side) { return Math.max(0, Math.min(2, heroOf(side).mastery || 0)); }
 
@@ -463,9 +535,18 @@
     var spec = null, i;
     for (i = 0; i < HSTATS.length; i++) if (HSTATS[i][0] === stat) spec = HSTATS[i];
     if (spec) n = Math.max(spec[3], Math.min(spec[4], Math.round(n)));
+    var prev = h[stat] || 0;
     h[stat] = n;
-    // 知识改了上限：当前法力只压回上限，不主动补满（原版提升知识只抬上限）
-    if (stat === "knowledge" && mana[side] > manaMax(side)) mana[side] = manaMax(side);
+    /* 知识改了上限：法力跨战斗保留，这里**不白送蓝**。两个例外（原型自定：
+       面板是"换一个英雄"，不是游戏内升级）：
+         · 原本就是满蓝 → 跟着新上限满（含从知识 0 起，否则面板上调完永远没法施法）
+         · 原本超过 2×上限（魔法泉翻倍）→ 压回 2×上限 */
+    if (stat === "knowledge") {
+      var oldMax = 10 * prev, newMax = manaMax(side), cur = manaOf(side);
+      if (oldMax === 0 || cur === oldMax) mana[side] = newMax;      // 满蓝跟着走（含从"没有法师"起）
+      else if (cur === 2 * oldMax) mana[side] = 2 * newMax;         // 翻倍态跟着走
+      else if (cur > 2 * newMax) mana[side] = 2 * newMax;           // 其余只收口
+    }
     if (units) units.forEach(function(u){ if (u.side === side) applyHeroStats(u); });
     renderHeroBar();
     if (units) render();
@@ -500,8 +581,18 @@
             '" class="' + (v ? "on" : "") + '" title="' + f[2] + '">';
         }).join("") + '</div>' +
         '<div class="mana" data-mana="' + side + '">法力 <b>' + manaOf(side) + '</b>/' +
-          manaMax(side) + (castsThisRound[side] ? ' · 本回合已施法' : '') + '</div>';
+          manaMax(side) + (manaOf(side) > manaMax(side) ? '（翻倍）' : '') +
+          (castsThisRound[side] ? ' · 本回合已施法' : '') + '</div>';
     });
+    h += '<div class="sup">' +
+      '<div class="sd">战役 · 第 <b>' + CAMPAIGN.day + '</b> 天' +
+        (CAMPAIGN.last ? ' · ' + CAMPAIGN.last : '') + '</div>' +
+      '<div class="sb">' +
+        '<button data-rest="field" title="野外过夜：每个英雄每天恢复 1 点法力">野外过夜</button>' +
+        '<button data-rest="town" title="城镇过夜（有魔法行会）：法力回满">城镇过夜</button>' +
+        '<button data-rest="well" title="魔泉：回满，每个英雄每天一次">魔泉</button>' +
+        '<button data-rest="spring" title="魔法泉 / 魔法旋涡：回满并翻倍，每周一次">魔法泉</button>' +
+      '</div></div>';
     bar.innerHTML = h;
   }
 
@@ -513,6 +604,15 @@
       var t = e.target || {}, d = t.dataset || {};
       if (!d.side || !d.stat) return;
       setHero(d.side, d.stat, t.value);
+    });
+    // 战役补给：过夜 / 魔泉 / 魔法泉（都是纯逻辑函数，按钮只做转发）
+    bar.addEventListener("click", function(e){
+      var t = e.target || {}, d = t.dataset || {};
+      if (!d.rest) return;
+      if (d.rest === "well") visitWell();
+      else if (d.rest === "spring") visitSpring();
+      else restDay(d.rest);
+      if (units) render();
     });
   })();
 
@@ -553,7 +653,18 @@
     box.masteryOf = masteryOf;
     box.manaMax = manaMax;
     box.manaOf = manaOf;
-    box.setMana = function(side, v){ mana[side] = Math.max(0, Math.min(manaMax(side), Math.round(+v) || 0)); };
+    box.setMana = function(side, v){ mana[side] = Math.max(0, Math.min(manaCeil(side), Math.round(+v) || 0)); };
+    // ── 战役层（法力经济，_probe18）──
+    box.manaCeil = manaCeil;
+    box.restDay = restDay;
+    box.visitWell = visitWell;
+    box.visitSpring = visitSpring;
+    box.weekOf = weekOf;
+    box.campaign = function(){
+      return { day: CAMPAIGN.day, wellDay: CAMPAIGN.wellDay,
+               springWeek: CAMPAIGN.springWeek, last: CAMPAIGN.last };
+    };
+    box.setDay = function(n){ CAMPAIGN.day = Math.max(1, Math.round(+n) || 1); renderHeroBar(); };
     box.spellDamage = spellDamage;
     box.spellDuration = spellDuration;
     box.spellIsMass = spellIsMass;
@@ -3182,9 +3293,9 @@
     settling = false;
     units = makeUnits();
     faceAll();                          // 开局站位：双格单位的头一律朝敌人
-    // 法力每场回满（原型自定：没有冒险地图，无法带"上路时的剩余法力"进战斗）
-    mana.us = manaMax("us");
-    mana.them = manaMax("them");
+    /* 法力**不**在开战时回满：它是战役状态，上一场剩多少这一场就是多少。
+       只按当前上限收口（魔法泉翻倍可以超上限，保留到花完为止）。 */
+    eachSide(function(side){ if (manaOf(side) > manaCeil(side)) mana[side] = manaCeil(side); });
     castsThisRound.us = 0; castsThisRound.them = 0;
     castMode = null;
     roundNo = 1;

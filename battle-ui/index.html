@@ -132,22 +132,45 @@
 
   /* 英雄数值容器：只给部队与规则供数，不参与任何战斗判定 */
   .heroes{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
-  .heroes .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink3);margin-bottom:5px}
-  .heroes .hd b{font-weight:500;color:var(--ink2);font-size:11px}
+  .heroes .hd{display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:12px;color:var(--ink3);margin-bottom:5px}
+  .heroes .hd b{font-weight:500;color:var(--ink2);font-size:11px;margin-right:auto}
   .heroes .hd .hbtn{
     font:10px/1.3 inherit;padding:2px 6px;border:1px solid var(--line);border-radius:6px;
     background:#fafbf6;color:var(--ink3);cursor:pointer;margin-left:5px;
   }
   .heroes .hd .hbtn:hover{border-color:var(--ink3);color:var(--ink);background:#fff}
-  /* 两组列数不同：部队数值 7 项 / 魔法技能 5 项（魔力 + 四系） */
+  /* 主属性 4 项 + 三个修正值，一行 7 格 */
   .hg{display:grid;gap:3px;align-items:center}
   .hg.main{grid-template-columns:26px repeat(7,1fr)}
-  .hg.magic{grid-template-columns:26px repeat(5,1fr)}
   .hg + .hg{margin-top:3px}
-  .hg.magic,.hg.main + .hg.magic{margin-top:5px}
   .hg .hn{font-size:12px;color:var(--ink2)}
   .heroes .hsep{margin:7px 0 4px;padding-top:6px;border-top:1px dashed var(--line);font-size:10px;color:var(--ink3);letter-spacing:.2px}
   .hg .hh{font-size:10px;color:var(--ink3);text-align:center;line-height:1}
+  /* 技能槽：8 格，空的画虚线 */
+  .skl{margin-top:7px;padding-top:6px;border-top:1px dashed var(--line)}
+  .skl .sh{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--ink3);margin-bottom:4px}
+  .skl .sh span{flex:1}
+  .skl .sh b{color:var(--ink2);font-variant-numeric:tabular-nums}
+  .skl .sh .hbtn{
+    font:10px/1.3 inherit;padding:1px 5px;border:1px solid var(--line);border-radius:6px;
+    background:#fafbf6;color:var(--ink3);cursor:pointer;
+  }
+  .skl .sh .hbtn:hover{border-color:var(--ink3);color:var(--ink);background:#fff}
+  .skl .sh .hbtn.hot{border-color:#9db8d6;background:#eef4fb;color:#3b5d86}
+  .skr{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+  .skr i{
+    font-style:normal;font-size:10px;line-height:1.5;padding:1px 2px;border-radius:6px;
+    border:1px solid var(--line);background:#fafbf6;color:var(--ink3);text-align:center;
+    font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;
+  }
+  .skr i.on{background:#eef4fb;border-color:#9db8d6;color:#2c4a6b;font-weight:600}
+  .skr i.empty{border-style:dashed;color:#c6c6c6;background:transparent}
+  .sks{margin-top:4px;display:flex;gap:4px;flex-wrap:wrap;align-items:center;font-size:10px;color:var(--ink3)}
+  .sks button{
+    font:10.5px/1.4 inherit;padding:2px 7px;border-radius:6px;border:1px solid #9db8d6;
+    background:#eef4fb;color:#2c4a6b;cursor:pointer;
+  }
+  .sks button:hover{background:#e2edf9}
   .hg input{
     width:100%;box-sizing:border-box;font:11px/1.5 inherit;padding:1px 0;text-align:center;
     border:1px solid var(--line);border-radius:5px;background:#fafbf6;color:var(--ink);
@@ -184,6 +207,14 @@
   .spellbook button.ready{border-color:#9db8d6;background:#eef4fb}
   .spellbook button:disabled{opacity:.45}
   .spellbook .tip{font-size:10.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
+  /* 学法术一行：魔法行会 / 路边机遇 */
+  .spellbook .learn{display:flex;align-items:center;gap:5px;margin-top:7px;padding-top:6px;border-top:1px dashed var(--line);font-size:10.5px;color:var(--ink3)}
+  .spellbook .learn button{
+    display:inline-block;flex:0 0 auto;font:10.5px/1.4 inherit;padding:2px 8px;
+    border:1px solid #9db8d6;border-radius:6px;background:#eef4fb;color:#2c4a6b;cursor:pointer;
+  }
+  .spellbook .learn button:hover{background:#e2edf9}
+  .spellbook .empty{font-size:11px;color:var(--ink3);padding:10px 0;line-height:1.6}
 
   /* ── 法术书弹窗：按钮开出，浮在战棋区域上（不动右侧面板的布局） ── */
   .fieldwrap{position:relative}
@@ -497,53 +528,85 @@
      力 2 / 识 3 → 30 点法力，够放 3~6 个一级法术；幸·士·术 保持 0 是对的
      （原版开局英雄没有幸运/士气加成，也没有战术技能）。
      全 0 = "场上没有英雄"，那是 resetHeroes() 的测试基线，不是开局状态。 */
-  var DEFAULT_HERO = {
-    attack: 1, defense: 1, spellpower: 2, knowledge: 3,
-    sorcery: 0, air: 0, earth: 0, fire: 0, water: 0,
-    luck: 0, morale: 0, tactics: 0
+  /* ══════════ 次级技能池：8 个槽从这里抽 ══════════
+     原版次级技能共 28 个，这里挑 14 个做代表。四系魔法 + 魔力有战斗效果；
+     其余是探险/辅助技能，原型只挂名（没有冒险地图，寻路/后勤无从体现）。
+     ⚠ 它们**在同一个池子里**：升级时四系魔法和寻路术是平权的候选，
+     所以"没学气系"= 这 8 个槽里没有它，不是某个字段等于 -1。 */
+  var SKILLS = {
+    air:         { name: "气系魔法", short: "气", kind: "magic" },
+    earth:       { name: "土系魔法", short: "土", kind: "magic" },
+    fire:        { name: "火系魔法", short: "火", kind: "magic" },
+    water:       { name: "水系魔法", short: "水", kind: "magic" },
+    sorcery:     { name: "魔力",     short: "魔", kind: "magic" },
+    /* 下面两个 id 避开主属性字段名（hero.luck / hero.tactics 是最终修正值，
+       技能本身走 8 个槽，两者不是同一样东西） */
+    luckSkill:   { name: "幸运术",   short: "幸", kind: "adventure" },
+    leadership:  { name: "领导术",   short: "领", kind: "adventure" },
+    tacticsSkill:{ name: "战术",     short: "术", kind: "adventure" },
+    pathfinding: { name: "寻路术",   short: "寻", kind: "adventure" },
+    logistics:   { name: "后勤学",   short: "勤", kind: "adventure" },
+    scouting:    { name: "侦察术",   short: "侦", kind: "adventure" },
+    wisdom:      { name: "智慧术",   short: "智", kind: "adventure" },
+    learning:    { name: "学习术",   short: "学", kind: "adventure" },
+    mysticism:   { name: "神秘术",   short: "秘", kind: "adventure" }
   };
-
-  /* 魔法技能：魔力 + 四系。四系等级含义与原版一致（0 基础 / 1 高级 / 2 专家），
-     它决定该系法术的效果等级；魔力是纯加成（伤害法术 +10/20/30%）。 */
-  var SCHOOLS = ["air", "earth", "fire", "water"];
+  var SKILL_ORDER = ["air", "earth", "fire", "water", "sorcery",
+                     "luckSkill", "leadership", "tacticsSkill",
+                     "pathfinding", "logistics", "scouting", "wisdom",
+                     "learning", "mysticism"];
+  var MAGIC_SKILLS = ["air", "earth", "fire", "water", "sorcery"];
+  var SCHOOLS = ["air", "earth", "fire", "water"];         // 四系（不含魔力，界面/探针口径）
   var SCHOOL_LABEL = { air: "气", earth: "土", fire: "火", water: "水", all: "无系" };
   var SCHOOL_FULL = { air: "气系", earth: "土系", fire: "火系", water: "水系", all: "无系" };
-  // 魔力（Sorcery）对伤害法术的加成百分比，下标 = 等级
-  var SORCERY_BONUS = [0, 10, 20, 30];
+  var MAX_SKILLS = 8;                     // 原版次级技能槽上限
+  var SKILL_LV_NAME = ["基础", "高级", "专家"];
+  var SORCERY_BONUS = [0, 10, 20, 30];    // 魔力三级：+0% / +10% / +20% / +30%
+
+  /* 英雄的两层结构（2026-10-20 用户纠正后重做）：
+       · 主属性 4：attack / defense / spellpower / knowledge
+         每次升级 +1，按职业概率落到其中一项
+       · 次级技能：skills = [{id, lv}]，最多 8 项；**没学 = 不在这 8 项里**
+     luck / morale / tactics 保留成"最终修正值"的独立字段（技能是来源之一，
+     也可以直接调），这样士气/幸运探针能直接给负数。 */
+  var DEFAULT_HERO = {
+    cls: "might", level: 1,
+    attack: 1, defense: 1, spellpower: 2, knowledge: 3,
+    luck: 0, morale: 0, tactics: 0,
+    // 开局给两系基础（原型自定）：面板不至于一片空，加速/减速仍在基础档
+    skills: [ { id: "air", lv: 0 }, { id: "earth", lv: 0 } ]
+  };
 
   function makeHero(name) {
-    var h = { name: name, attack: 0, defense: 0, spellpower: 0, knowledge: 0,
-              sorcery: 0, air: 0, earth: 0, fire: 0, water: 0,
-              luck: 0, morale: 0, tactics: 0 };
-    return h;
+    return { name: name || "", cls: "might", level: 1,
+             attack: 0, defense: 0, spellpower: 0, knowledge: 0,
+             luck: 0, morale: 0, tactics: 0,
+             skills: [], spells: null, offer: null };
   }
   function defaultHero() {
     var h = makeHero("");
-    Object.keys(DEFAULT_HERO).forEach(function(k){ h[k] = DEFAULT_HERO[k]; });
+    Object.keys(DEFAULT_HERO).forEach(function(k){
+      if (k === "skills") h.skills = DEFAULT_HERO.skills.map(function(s){ return { id: s.id, lv: s.lv }; });
+      else h[k] = DEFAULT_HERO[k];
+    });
     return h;
   }
   var HEROES = { us: defaultHero(), them: defaultHero() };
   HEROES.us.name = "我方英雄";
   HEROES.them.name = "敌方英雄";
 
-  /* 面板字段：key / 表头 / 悬浮说明 / 下界 / 上界 / 分组
-     （原版 luck·morale 是 -3…+3，tactics 0…3，四系与魔力 0…2 = 基础/高级/专家）
-     分两组渲染：main = 部队数值，magic = 魔力 + 四系（原版是五个独立的次级技能） */
+  /* 面板可调字段：只有主属性 4 项 + 三个修正值。魔法技能不在这里——
+     它是 8 个槽，靠升级选（见 levelUp / pickSkill），不能直接打数字。 */
   var HSTATS = [
     ["attack",     "攻", "攻击：加到每只生物的攻击上，进 I1 攻防差",        0, 20, "main"],
     ["defense",    "防", "防御：加到每只生物的防御上，进 R1 与反击",        0, 20, "main"],
     ["spellpower", "力", "力量：法术伤害加项，也是法术持续回合数",          0, 20, "main"],
     ["knowledge",  "识", "知识：每点 +10 最大法力；法力跨战斗保留，靠过夜/魔泉恢复", 0, 20, "main"],
-    ["luck",       "幸", "幸运：+N → N/24 触发幸运一击（+1…+3）",          -3, 3, "main"],
-    ["morale",     "士", "士气：+N → N/24，好/坏士气",                      -3, 3, "main"],
-    ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片未做）", 0, 3, "main"],
-    ["sorcery",    "魔", "魔力 Sorcery：伤害法术 +10% / +20% / +30%",       0, 2, "magic"],
-    ["air",        "气", "气系魔法：加速、闪电的效果等级（0 基础 1 高级 2 专家）", 0, 2, "magic"],
-    ["earth",      "土", "土系魔法：减速的效果等级",                        0, 2, "magic"],
-    ["fire",       "火", "火系魔法：诅咒的效果等级",                        0, 2, "magic"],
-    ["water",      "水", "水系魔法：祝福、驱散的效果等级",                  0, 2, "magic"]
+    ["luck",       "幸", "幸运：+N → N/24 触发幸运一击（技能「幸运术」另加）", -3, 3, "main"],
+    ["morale",     "士", "士气：+N → N/24，好/坏士气（技能「领导术」另加）",  -3, 3, "main"],
+    ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片未做）", 0, 3, "main"]
   ];
-  var HGROUPS = [["main", "英雄"], ["magic", "魔法"]];
+  var HGROUPS = [["main", "英雄"]];
 
   /* ── 法力与每回合施法额度 ──
      法力是**战役状态**，不是战斗内状态：这一场花掉的蓝，出了战斗还在。
@@ -615,61 +678,176 @@
     renderHeroBar();
     return { ok: true, day: CAMPAIGN.day, us: manaOf("us"), them: manaOf("them") };
   }
-  /* ── 魔法技能：四系等级 + 魔力 ──
-     原版每个学派是**独立的次级技能**，该系法术的效果等级就取该系技能等级
-     （没有该系技能 = 只能出基础效果）。wiki /Air_Magic 三级描述：
-       Basic   "cast air spells at reduced cost"
-       Advanced "… reduced cost and increased effectiveness"
-       Expert   "… reduced cost and maximum effectiveness"
-     各法术页则按 Basic / Advanced / Expert 逐档给数值（本原型的 7 个法术见 SPELLS）。
-     「reduced cost」一层未建模：原型每个法术只有一个固定 cost，没有分档消耗表。
+  /* ── 次级技能：8 槽读写 ──
+     等级 0 基础 / 1 高级 / 2 专家；**未学用 -1 表示**（只在 skillLv 里出现）。
+     法术效果口径把 -1 当 0 = 基础档 —— 没学该系照样能放，只是效果停在基础档。 */
+  function skillOf(side, id) {
+    var list = heroOf(side).skills || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  function hasSkill(side, id) { return !!skillOf(side, id); }
+  function skillLv(side, id) { var s = skillOf(side, id); return s ? s.lv : -1; }
 
-     无系法术（魔法箭 school:"all"）：wiki /Magic_Arrow 原文 "In the spell book,
-     Magic Arrow will belong to the school with the highest secondary magic skill"，
-     所以取**最高**的那一系等级（四系全 0 = 基础效果）。 */
+  /* 该系法术的**效果档**：未学 = 基础档（用户 2026-10-20 确认：能放，效果停在基础）。
+     无系法术（魔法箭）取四系里最高的那一档。 */
   function schoolLevelOf(side, school) {
-    var h = heroOf(side), m = 0, i;
+    var m = 0, i;
     if (school === "all") {
-      for (i = 0; i < SCHOOLS.length; i++) m = Math.max(m, Math.max(0, Math.min(2, h[SCHOOLS[i]] || 0)));
+      for (i = 0; i < SCHOOLS.length; i++) m = Math.max(m, Math.max(0, skillLv(side, SCHOOLS[i])));
       return m;
     }
-    return Math.max(0, Math.min(2, h[school] || 0));
+    return Math.max(0, skillLv(side, school));
   }
-  // 四系里最高的那一级（= 无系法术的效果等级，也用于面板/探针的"总体精通"口径）
+  // 四系里最高的那一级（= 无系法术的效果等级，也用于探针的"总体精通"口径）
   function masteryOf(side) { return schoolLevelOf(side, "all"); }
-  // 魔力 Sorcery：0/1/2 → +0% / +10% / +20% / +30%（只作用于伤害法术）
-  function sorceryOf(side) { return Math.max(0, Math.min(2, heroOf(side).sorcery || 0)); }
+  // 魔力 Sorcery：未学/基础 +0%，高级 +20%，专家 +30%（只作用于伤害法术）
+  function sorceryOf(side) { return Math.max(0, skillLv(side, "sorcery")); }
+
+  /* 学一项技能：未学 → 占一个空槽（槽满拒绝）；已学 → 升一级（专家封顶）。 */
+  function learnSkill(side, id) {
+    var h = HEROES[side];
+    if (!h || !SKILLS[id]) return { ok: false, why: "没有这个技能" };
+    var s = skillOf(side, id);
+    if (s) {
+      if (s.lv >= 2) return { ok: false, why: SKILLS[id].name + "已经是专家" };
+      s.lv += 1;
+    } else {
+      if ((h.skills || []).length >= MAX_SKILLS) return { ok: false, why: "技能槽已满（8 个）" };
+      (h.skills = h.skills || []).push({ id: id, lv: 0 });
+    }
+    afterSkillChange(side);
+    return { ok: true, id: id, lv: skillLv(side, id) };
+  }
+  // 移除一项技能（回到"未学"）：界面不给入口，测试用
+  function dropSkill(side, id) {
+    var h = HEROES[side], i;
+    if (!h || !h.skills) return false;
+    for (i = 0; i < h.skills.length; i++) {
+      if (h.skills[i].id === id) { h.skills.splice(i, 1); afterSkillChange(side); return true; }
+    }
+    return false;
+  }
+
+  /* 升级候选：未学的（还有空槽时）+ 已学但没到专家的，按职业权重加权抽 2 个。 */
+  function skillPool(side) {
+    var h = heroOf(side), full = (h.skills || []).length >= MAX_SKILLS, out = [];
+    SKILL_ORDER.forEach(function(id){
+      var s = skillOf(side, id);
+      if (s) { if (s.lv < 2) out.push(id); }
+      else if (!full) out.push(id);
+    });
+    return out;
+  }
+  // 职业倾向：魔法英雄偏魔法技能，力量英雄偏探险技能（权重 6 : 2，原型自定）
+  function skillWeight(side, id) {
+    var magic = MAGIC_SKILLS.indexOf(id) >= 0;
+    var magicHero = (heroOf(side).cls || "might") === "magic";
+    return magic === magicHero ? 6 : 2;
+  }
+  function skillOffers(side, n) {
+    var pool = skillPool(side), out = [];
+    n = n || 2;
+    while (out.length < n && pool.length) {
+      var total = 0, i, r, pick = 0;
+      for (i = 0; i < pool.length; i++) total += skillWeight(side, pool[i]);
+      r = rand() * total;
+      for (i = 0; i < pool.length; i++) { r -= skillWeight(side, pool[i]); if (r < 0) { pick = i; break; } }
+      out.push(pool.splice(pick, 1)[0]);
+    }
+    return out;
+  }
+
+  /* 升级：主属性 +1（按职业概率落到一项）+ 给两个技能候选（h.offer）。
+     pickSkill() 消费候选；不选就一直是"待选"。 */
+  var STAT_W = {
+    might: { attack: 30, defense: 30, spellpower: 20, knowledge: 20 },
+    magic: { attack: 10, defense: 10, spellpower: 40, knowledge: 40 }
+  };
+  function levelUp(side) {
+    var h = HEROES[side];
+    if (!h) return { ok: false };
+    h.level = (h.level || 1) + 1;
+    var w = STAT_W[h.cls] || STAT_W.might, keys = Object.keys(w);
+    var total = 0, i, r, pick = keys[0];
+    keys.forEach(function(k){ total += w[k]; });
+    r = rand() * total;
+    for (i = 0; i < keys.length; i++) { r -= w[keys[i]]; if (r < 0) { pick = keys[i]; break; } }
+    h[pick] = (h[pick] || 0) + 1;
+    h.offer = skillOffers(side, 2);
+    afterSkillChange(side);
+    return { ok: true, level: h.level, stat: pick, offer: h.offer.slice() };
+  }
+  function pickSkill(side, id) {
+    var h = HEROES[side];
+    if (!h || !h.offer) return { ok: false, why: "当前没有待选的升级" };
+    if (h.offer.indexOf(id) < 0) return { ok: false, why: "不在本次候选里" };
+    h.offer = null;
+    return learnSkill(side, id);
+  }
+  // 技能 / 等级变动后的统一收尾：摊到部队 + 重画（法力上限跟着知识走）
+  function afterSkillChange(side) {
+    if (units) units.forEach(function(u){ if (u.side === side) applyHeroStats(u); });
+    renderHeroBar();
+    if (units) render();
+    syncSpellBtn();
+  }
 
   function heroOf(side) { return HEROES[side] || {}; }
 
   /* 把英雄数值摊到一支部队上。baseAtt/baseDef 是 ROSTER 的裸值，必须分开存：
-     英雄加成是"加上去"的，反复调英雄值不能把加成累加进去。 */
+     英雄加成是"加上去"的，反复调英雄值不能把加成累加进去。
+     技能「幸运术 / 领导术」的加成在这里叠上去（基础/高级/专家 = +1/+2/+3）。 */
+  function skillBonus(side, id) {
+    var lv = skillLv(side, id);
+    return lv < 0 ? 0 : lv + 1;
+  }
   function applyHeroStats(u) {
     var h = heroOf(u.side);
     u.att = (u.baseAtt || 0) + (h.attack || 0);
     u.def = (u.baseDef || 0) + (h.defense || 0);
-    u.luck = h.luck || 0;
-    u.morale = h.morale || 0;
+    u.luck = (h.luck || 0) + skillBonus(u.side, "luckSkill");
+    u.morale = (h.morale || 0) + skillBonus(u.side, "leadership");
     u.tactics = h.tactics || 0;
     u.spellpower = h.spellpower || 0;
   }
 
+  // 把某技能设成 lv（<0 = 移除 = 未学）。槽满且是未学技能 → 失败。
+  function setSkillLevel(side, id, lv) {
+    var h = HEROES[side];
+    if (!h || !SKILLS[id]) return false;
+    var s = skillOf(side, id);
+    if (lv < 0) {
+      if (!s) return false;
+      h.skills.splice(h.skills.indexOf(s), 1);
+      return true;
+    }
+    lv = Math.max(0, Math.min(2, lv));
+    if (s) { s.lv = lv; return true; }
+    if ((h.skills || []).length >= MAX_SKILLS) return false;
+    (h.skills = h.skills || []).push({ id: id, lv: lv });
+    return true;
+  }
+
   /* 改英雄数值并**立即**同步到场上部队（不重开一局，便于当场看伤害变化）。
-     返回 false 表示参数非法（未知阵营 / 未知字段 / 非数值）。 */
+     返回 false 表示参数非法（未知阵营 / 未知字段 / 非数值）。
+     技能 id（air/earth/fire/water/sorcery/luck/…）走 8 个槽：n = 0/1/2 设等级，
+     n < 0 移除；"mastery" 是"四系同设"的旧别名（既有探针走这条路）。 */
   function setHero(side, stat, val) {
     var h = HEROES[side];
     if (!h || stat === "name") return false;
     var n = Number(val);
     if (!isFinite(n)) return false;
-    /* "mastery" 是**四系同设**的别名，不是字段（旧调用与旧探针都走这条路）。
-       原版没有"统一精通"这种东西，所以这里只做批量写：四系一起设成同一级。 */
     if (stat === "mastery") {
       var lv = Math.max(0, Math.min(2, Math.round(n)));
-      SCHOOLS.forEach(function(k){ h[k] = lv; });
-      if (units) units.forEach(function(u){ if (u.side === side) applyHeroStats(u); });
-      renderHeroBar();
-      if (units) render();
+      SCHOOLS.forEach(function(k){ setSkillLevel(side, k, lv); });
+      afterSkillChange(side);
       return true;
+    }
+    if (SKILLS[stat]) {                       // 技能：走 8 个槽
+      var ok = setSkillLevel(side, stat, Math.round(n));
+      if (ok) afterSkillChange(side);
+      return ok;
     }
     if (!Object.prototype.hasOwnProperty.call(h, stat)) return false;
     var spec = null, i;
@@ -693,11 +871,18 @@
     return true;
   }
 
-  // 归零（探针每个用例之间用；等价于"场上没有英雄"，法力也一起归零）
+  // 归零（探针每个用例之间用；等价于"场上没有英雄"，技能槽清空、法力也归零）
   function resetHeroes() {
     Object.keys(HEROES).forEach(function(s){
       var h = HEROES[s];
       HSTATS.forEach(function(f){ h[f[0]] = 0; });
+      h.skills = [];
+      h.level = 1;
+      h.cls = "might";
+      h.offer = null;
+      /* 法术书：基线给**整本已学**（探针要能直接 castSpell 任何一条）。
+         UI 的默认英雄只有 5 条，见 DEFAULT_SPELLS。 */
+      h.spells = (typeof SPELL_ORDER !== "undefined") ? SPELL_ORDER.slice() : [];
     });
     eachSide(function(side){ mana[side] = 0; });
     if (units) units.forEach(applyHeroStats);
@@ -710,7 +895,11 @@
   function restoreDefaultHeroes() {
     Object.keys(HEROES).forEach(function(s){
       var d = defaultHero();
-      Object.keys(d).forEach(function(k){ if (k !== "name") HEROES[s][k] = d[k]; });
+      Object.keys(d).forEach(function(k){
+        if (k === "name") return;
+        HEROES[s][k] = (k === "skills") ? d.skills.map(function(x){ return { id: x.id, lv: x.lv }; }) : d[k];
+      });
+      HEROES[s].spells = null;              // 法术书回到默认（已学全部 7 个）
     });
     eachSide(function(side){ mana[side] = manaMax(side); });
     if (units) units.forEach(applyHeroStats);
@@ -718,18 +907,36 @@
     if (units) render();
   }
 
+  // 8 个技能槽：已学的画名字+档位（气 初 / 土 高 / 水 专），没学的画虚线"空"
+  function skillSlotsHtml(side) {
+    var list = HEROES[side].skills || [], out = "", i;
+    for (i = 0; i < MAX_SKILLS; i++) {
+      var s = list[i];
+      if (s) {
+        var sk = SKILLS[s.id] || { name: s.id, short: "?" };
+        out += '<i class="on" title="' + sk.name + ' · ' + SKILL_LV_NAME[s.lv] + '">' +
+               sk.short + "·" + ["初", "高", "专"][s.lv] + "</i>";
+      } else {
+        out += '<i class="empty">空</i>';
+      }
+    }
+    return out;
+  }
+
+  var CLS_SHORT = { might: "力量", magic: "魔法" };
+
   function renderHeroBar() {
     var bar = document.getElementById("heroBar");
     if (!bar) return;
+    var us = HEROES.us;
     var h = '<div class="hd"><span>英雄</span>' +
-            '<b>数值容器 · 只供数不升级</b>' +
-            '<button class="hbtn" data-hero="default" title="回到默认英雄（攻 1 / 防 1 / 力 2 / 识 3，魔法技能归 0，法力补满）">默认</button>' +
+            '<b>' + (CLS_SHORT[us.cls] || CLS_SHORT.might) + ' · Lv ' + (us.level || 1) + '</b>' +
+            '<button class="hbtn" data-hero="default" title="回到默认英雄（攻 1 / 防 1 / 力 2 / 识 3，技能槽 气+土 基础，法力补满）">默认</button>' +
             '</div>';
-    /* 两组：部队数值 7 项 / 魔法技能 5 项（魔力 + 四系）。两组各自的列数不同，
-       由 .hg.main / .hg.magic 的网格列数决定。 */
+    /* 主属性 4 项 + 幸运/士气/战术三个修正值，各 1 行。魔法技能**不在这**——
+       它是下面 8 个槽，靠升级选。 */
     HGROUPS.forEach(function(g){
       var fs = HSTATS.filter(function(f){ return f[5] === g[0]; });
-      if (g[0] === "magic") h += '<div class="hsep">魔法技能 · 0 基础 / 1 高级 / 2 专家</div>';
       h += '<div class="hg ' + g[0] + '"><span></span>' +
         fs.map(function(f){ return '<span class="hh">' + f[1] + '</span>'; }).join("") +
         '</div>';
@@ -750,6 +957,23 @@
         (manaOf(side) > manaMax(side) ? '（翻倍）' : '') +
         (castsThisRound[side] ? ' · 本回合已施法' : '') + '</div>';
     });
+    /* 技能槽（只画我方：玩家的 8 个槽；敌方走同一套规则但不在界面上配） */
+    h += '<div class="skl"><div class="sh">' +
+      '<span>技能槽 <b>' + (us.skills || []).length + '</b>/' + MAX_SKILLS + '</span>' +
+      '<button class="hbtn" data-act="cls" title="切换职业：魔法英雄更容易抽到魔法技能，力量英雄更容易抽到探险技能">' +
+        (us.cls === "magic" ? "魔法" : "力量") + '</button>' +
+      '<button class="hbtn' + (us.offer && us.offer.length ? " hot" : "") + '" data-act="levelup" ' +
+        'title="升一级：主属性 +1（按职业概率落到一项），再给 2 个技能候选选 1 个">升级</button>' +
+      '</div><div class="skr" data-slots="us">' + skillSlotsHtml("us") + '</div>';
+    if (us.offer && us.offer.length) {
+      h += '<div class="sks">待选 ' + us.offer.map(function(id){
+        var sk = SKILLS[id] || { name: id };
+        var lv = skillLv("us", id);
+        return '<button data-pick="' + id + '">' + sk.name +
+          (lv < 0 ? '（新学）' : '（升' + SKILL_LV_NAME[lv + 1] + '）') + '</button>';
+      }).join("") + '</div>';
+    }
+    h += '</div>';
     h += '<div class="sup">' +
       '<div class="sd">战役 · 第 <b>' + CAMPAIGN.day + '</b> 天' +
         (CAMPAIGN.last ? ' · ' + CAMPAIGN.last : '') + '</div>' +
@@ -769,12 +993,24 @@
     bar.addEventListener("input", function(e){
       var t = e.target || {}, d = t.dataset || {};
       if (!d.side || !d.stat) return;
-      setHero(d.side, d.stat, t.value);
+      setHero(d.side, d.stat, t.value);       // 技能不在输入框里：技能是 8 个槽，只能靠升级选
     });
-    // 战役补给：过夜 / 魔泉 / 魔法泉（都是纯逻辑函数，按钮只做转发）
+    // 默认 / 职业 / 升级 / 选技能 / 战役补给（纯逻辑函数，按钮只做转发）
     bar.addEventListener("click", function(e){
       var t = e.target || {}, d = t.dataset || {};
       if (d.hero === "default") { restoreDefaultHeroes(); if (units) render(); return; }
+      if (d.act === "cls") {
+        HEROES.us.cls = (HEROES.us.cls === "magic") ? "might" : "magic";
+        renderHeroBar();
+        return;
+      }
+      if (d.act === "levelup") { levelUp("us"); if (units) render(); return; }
+      if (d.pick) {
+        var r = pickSkill("us", d.pick);
+        if (!r.ok && r.why) setHint(r.why);
+        if (units) render();
+        return;
+      }
       if (!d.rest) return;
       if (d.rest === "well") visitWell();
       else if (d.rest === "spring") visitSpring();
@@ -821,7 +1057,12 @@
     box.castModeKey = function(){ return castMode; };
     box.clearCastMode = function(){ castMode = null; };
     box.masteryOf = masteryOf;
-    // ── 魔法技能：魔力 + 四系（_probe23）──
+    // ── 次级技能：8 槽（_probe23 / _probe24）──
+    box.SKILLS = SKILLS;
+    box.SKILL_ORDER = SKILL_ORDER;
+    box.MAGIC_SKILLS = MAGIC_SKILLS;
+    box.MAX_SKILLS = MAX_SKILLS;
+    box.SKILL_LV_NAME = SKILL_LV_NAME;
     box.SCHOOLS = SCHOOLS;
     box.SCHOOL_LABEL = SCHOOL_LABEL;
     box.SCHOOL_FULL = SCHOOL_FULL;
@@ -829,7 +1070,30 @@
     box.sorceryOf = sorceryOf;
     box.schoolLevelOf = schoolLevelOf;
     box.sorceryBonus = function(side){ return SORCERY_BONUS[sorceryOf(side)]; };
+    box.skillLv = skillLv;
+    box.skillOf = skillOf;
+    box.hasSkill = hasSkill;
+    box.learnSkill = learnSkill;
+    box.dropSkill = dropSkill;
+    box.setSkillLevel = setSkillLevel;
+    box.skillPool = skillPool;
+    box.skillOffers = skillOffers;
+    box.levelUp = levelUp;
+    box.pickSkill = pickSkill;
+    box.setHero = setHero;
     box.setMastery = function(side, n){ return setHero(side, "mastery", n); };  // 四系同设
+    // ── 法术书 = 已学清单 ──
+    box.DEFAULT_SPELLS = DEFAULT_SPELLS;
+    box.knownSpells = knownSpells;
+    box.knowsSpell = knowsSpell;
+    box.learnSpell = learnSpell;
+    box.forgetSpell = forgetSpell;
+    box.visitGuild = visitGuild;
+    box.visitHut = visitHut;
+    box.learnAllSpells = function(side){
+      side = side || "us";
+      SPELL_ORDER.forEach(function(k){ if (!knowsSpell(side, k)) learnSpell(side, k); });
+    };
     box.spellTag = spellTag;
     box.spellNow = spellNow;
     box.manaMax = manaMax;
@@ -1167,6 +1431,48 @@
   }
 
   // 施法时机：轮到我方（且不是自动/快速战斗——那两种模式玩家不操作）
+  /* ══════════ 法术书 = 已学会的法术 ══════════
+     和技能是**两层**：法术是学来的（城镇魔法行会 Mage Guild / 冒险地图机遇），
+     技能（四系 + 魔力）只决定法术的效果档。所以"未学该系技能"照样能放该系法术，
+     只是效果停在基础档；反过来，**法术书里没有这条法术就不能放**。
+     原型自定：开局已学 5 条（DEFAULT_SPELLS），驱散与闪电要另学。 */
+  var DEFAULT_SPELLS = ["magicArrow", "bless", "curse", "haste", "slow"];
+
+  function knownSpells(side) {
+    var h = heroOf(side);
+    if (!h.spells) h.spells = DEFAULT_SPELLS.filter(function(k){ return !!SPELLS[k]; });
+    return h.spells;
+  }
+  function knowsSpell(side, key) { return knownSpells(side).indexOf(key) >= 0; }
+  function learnSpell(side, key) {
+    if (!SPELLS[key]) return { ok: false, why: "没有这个法术" };
+    var list = knownSpells(side);
+    if (list.indexOf(key) >= 0) return { ok: false, why: "已经会了" };
+    list.push(key);
+    renderSpellBook(); renderHeroBar();
+    return { ok: true, key: key, known: list.length };
+  }
+  function forgetSpell(side, key) {
+    var list = knownSpells(side), i = list.indexOf(key);
+    if (i < 0) return false;
+    list.splice(i, 1);
+    renderSpellBook();
+    return true;
+  }
+  // 魔法行会：从还不会的法术里挑等级最低的一条学会
+  function visitGuild() {
+    var miss = SPELL_ORDER.filter(function(k){ return !knowsSpell("us", k); });
+    if (!miss.length) return { ok: false, why: "魔法行会里的法术都已经学会了" };
+    miss.sort(function(a, b){ return SPELLS[a].level - SPELLS[b].level; });
+    return learnSpell("us", miss[0]);
+  }
+  // 路边机遇（法师小屋 / 学者 / 书堆）：随机学一条还不会的
+  function visitHut() {
+    var miss = SPELL_ORDER.filter(function(k){ return !knowsSpell("us", k); });
+    if (!miss.length) return { ok: false, why: "路过的机遇没有新法术可学了" };
+    return learnSpell("us", miss[Math.floor(rand() * miss.length)]);
+  }
+
   function canCastNow(side) {
     var act = current();
     return !!(act && !act.dead && !over && act.side === side && !quickMode && !autoMode);
@@ -1177,6 +1483,7 @@
   function castSpell(side, key, target) {
     var s = SPELLS[key];
     if (!s) return { ok: false, why: "未知法术" };
+    if (!knowsSpell(side, key)) return { ok: false, why: "法术书里没有这个法术（去魔法行会或路边机遇学）" };
     if (over) return { ok: false, why: "战斗已结束" };
     if (!canCastNow(side)) return { ok: false, why: "现在不能施法（只在我方行动时）" };
     if (castsThisRound[side]) return { ok: false, why: "本回合已施法" };
@@ -1298,23 +1605,36 @@
     var box = document.getElementById("spellBook");
     if (!box) return;
     /* 法术书永远是**玩家自己（我方）**的：敌方部队行动中，整本禁用。
-       原版 AI 会自己施法，但那属于 AI 回合，不能由玩家代按。 */
+       原版 AI 会自己施法，但那属于 AI 回合，不能由玩家代按。
+       只列**已学会**的法术：没学过的法术不在这本书里，要去魔法行会/机遇学。 */
     var side = "us";
     var canCast = castableNow(side);
-    var h = '<div class="hd"><span>法术书 · ' + (side === "us" ? "我方" : "敌方") +
-            '</span><b>' + manaOf(side) + '/' + manaMax(side) + ' 法力</b></div><div class="grid">';
-    SPELL_ORDER.forEach(function(k){
-      var s = SPELLS[k];
-      var ready = canCast && manaOf(side) >= s.cost;
-      h += '<button data-spell="' + k + '" class="' + (ready ? "ready" : "") + '"' +
-        (ready ? "" : " disabled") + ' title="' + s.desc + '">' +
-        '<span class="nm">' + s.name + '<span class="cost">' + s.cost + '</span></span>' +
-        '<span class="ds">' + spellTag(k, side) + ' · ' + s.level + ' 级 · ' + spellNow(k, side) + '</span></button>';
-    });
-    h += '</div><div class="tip">' +
+    var known = SPELL_ORDER.filter(function(k){ return knowsSpell(side, k); });
+    var h = '<div class="hd"><span>法术书 · 已学 ' + known.length + '/' + SPELL_ORDER.length +
+            '</span><b>' + manaOf(side) + '/' + manaMax(side) + ' 法力</b></div>';
+    if (!known.length) {
+      h += '<div class="empty">这本书是空的：法术要去城镇魔法行会或路边的机遇学。</div>';
+    } else {
+      h += '<div class="grid">';
+      known.forEach(function(k){
+        var s = SPELLS[k];
+        var ready = canCast && manaOf(side) >= s.cost;
+        h += '<button data-spell="' + k + '" class="' + (ready ? "ready" : "") + '"' +
+          (ready ? "" : " disabled") + ' title="' + s.desc + '">' +
+          '<span class="nm">' + s.name + '<span class="cost">' + s.cost + '</span></span>' +
+          '<span class="ds">' + spellTag(k, side) + ' · ' + s.level + ' 级 · ' + spellNow(k, side) + '</span></button>';
+      });
+      h += '</div>';
+    }
+    h += '<div class="learn"><span>学法术：</span>' +
+      '<button data-learn="guild" title="城镇魔法行会：学会一条还不会的法术（先给等级低的）">魔法行会</button>' +
+      '<button data-learn="hut" title="路边机遇（法师小屋 / 学者 / 书堆）：随机学会一条还不会的法术">路边机遇</button>' +
+      '</div>';
+    h += '<div class="tip">' +
       (castMode ? "选目标：点描圈的部队施放，点空地取消"
         : !canCastNow(side) ? "只在我方单位行动时可施法"
         : castsThisRound[side] ? "本回合已施法（每回合一次）"
+        : !known.length ? "法术书是空的，先去学一条法术"
         : readySpellCount(side) === 0 ? "法力不足：先在右侧英雄面板设「知识」（每点 +10 法力）"
         : "点法术 → 弹窗收起 → 点目标 · 施法不消耗该单位的行动") +
       '</div>';
@@ -1330,7 +1650,9 @@
 
   function readySpellCount(side) {
     if (!castableNow(side)) return 0;
-    return SPELL_ORDER.filter(function(k){ return manaOf(side) >= SPELLS[k].cost; }).length;
+    return SPELL_ORDER.filter(function(k){
+      return knowsSpell(side, k) && manaOf(side) >= SPELLS[k].cost;
+    }).length;
   }
 
   // 按钮本身也报状态：能施法时描蓝边，瞄准中变成「取消施法」
@@ -1568,8 +1890,15 @@
     if (box && box.addEventListener) {
       box.addEventListener("click", function(e){
         var t = e.target;
-        while (t && t !== box && !(t.dataset && t.dataset.spell)) t = t.parentNode;
+        while (t && t !== box && !(t.dataset && (t.dataset.spell || t.dataset.learn))) t = t.parentNode;
         if (!t || t === box) return;
+        if (t.dataset.learn) {                     // 学法术：魔法行会 / 路边机遇
+          var lr = (t.dataset.learn === "guild") ? visitGuild() : visitHut();
+          setHint(lr.ok ? "学会了「" + SPELLS[lr.key].name + "」" : lr.why);
+          renderSpellBook();
+          syncSpellBtn();
+          return;
+        }
         beginCast(t.dataset.spell);
       });
     }

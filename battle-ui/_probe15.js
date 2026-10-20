@@ -240,7 +240,7 @@ ok('重生/亡灵等图鉴字段不被英雄覆盖', (function(){
 console.log('--- 10. 面板与快速战斗回归 ---');
 noHero();
 var hb = T.heroBarHtml();
-ok('英雄面板有 24 个输入框（12 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 24,
+ok('英雄面板有 14 个输入框（7 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 14,
    (hb.match(/data-stat=/g) || []).length);
 ok('全 0 时没有 .on 高亮', hb.indexOf('class="on"') < 0);
 T.setHero('us', 'attack', 2);

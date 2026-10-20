@@ -8,6 +8,7 @@
 //   6) 全体判定与驱散目标跟着该系等级走（气系专家 → 加速全体；水系基础 → 驱散只能友方）
 //   7) 法术书标签：系·等级 + 当前实际数值（含魔力）
 //   8) 施法链路口径：预测 = 结算 = spellDamage（含魔力）
+//   9) 面板等级显示：魔法技能 5 项按原版三级显示 1/2/3，内部索引仍是 0/1/2（双向换算）
 const fs = require('fs'), path = require('path');
 
 function El(t){
@@ -94,45 +95,85 @@ function onlySchool(k, lv){
 }
 function dmg(key){ return T.spellDamage(key, 'us'); }
 function eff(key){ return T.makeEffect(key, 'us'); }
+// 模拟在英雄面板那个输入框里手打一个值（走真实的 input 委托，验证 1/2/3 ↔ 0/1/2 回写）
+function panelInput(stat, side, val){
+  var fn = ((document.getElementById('heroBar').listeners || {}).input || [])[0];
+  if (!fn) return false;
+  fn({ target: { dataset: { side: side, stat: stat }, value: String(val) } });
+  return true;
+}
 
 // ════════════════════════════════════════════════════════════════
-console.log('--- 1. 容器：四系 + 魔力是独立字段，mastery 降级为别名 ---');
+console.log('--- 1. 技能在 8 个槽里，不是固定字段 ---');
 T.resetHeroes();
 ok('四系名单是 air/earth/fire/water', T.SCHOOLS.join() === 'air,earth,fire,water', T.SCHOOLS.join());
-ok('魔力 + 四系都在英雄对象上', ['sorcery'].concat(T.SCHOOLS).every(function(k){
-  return Object.prototype.hasOwnProperty.call(hero('us'), k);
+ok('四系 + 魔力都在技能池里', ['sorcery'].concat(T.SCHOOLS).every(function(k){ return !!T.SKILLS[k]; }),
+   Object.keys(T.SKILLS).join(','));
+ok('英雄对象上没有 air/earth/fire/water 字段', T.SCHOOLS.every(function(k){
+  return !Object.prototype.hasOwnProperty.call(hero('us'), k);
 }), Object.keys(hero('us')).join(','));
-ok('mastery 不再是字段', !Object.prototype.hasOwnProperty.call(hero('us'), 'mastery'),
-   Object.keys(hero('us')).join(','));
-ok('英雄对象 13 个键（12 数值 + name）', Object.keys(hero('us')).length === 13, Object.keys(hero('us')).length);
+ok('技能装在 skills 数组里', Array.isArray(hero('us').skills), typeof hero('us').skills);
+ok('归零后 8 个槽全空', hero('us').skills.length === 0, hero('us').skills.length);
+ok('没学 → skillLv = -1', T.skillLv('us', 'air') === -1, T.skillLv('us', 'air'));
+ok('没学 → 效果档仍是 0（能放，停在基础档）', T.schoolLevelOf('us', 'air') === 0,
+   T.schoolLevelOf('us', 'air'));
+T.setHero('us', 'air', 2);
+ok('setHero(air,2) → 塞进槽并设成专家', T.skillLv('us', 'air') === 2, T.skillLv('us', 'air'));
+ok('只占了一格', hero('us').skills.length === 1, hero('us').skills.length);
 T.setHero('us', 'mastery', 2);
 ok('setHero(mastery,2) 把四系一起设成 2',
-   T.SCHOOLS.every(function(k){ return hero('us')[k] === 2; }),
-   T.SCHOOLS.map(function(k){ return hero('us')[k]; }).join('/'));
+   T.SCHOOLS.every(function(k){ return T.skillLv('us', k) === 2; }),
+   T.SCHOOLS.map(function(k){ return T.skillLv('us', k); }).join('/'));
 ok('masteryOf() = 四系最高', T.masteryOf('us') === 2, T.masteryOf('us'));
 T.setHero('us', 'mastery', 9);
-ok('别名也钳在 0…2（9 → 2）', T.SCHOOLS.every(function(k){ return hero('us')[k] === 2; }));
+ok('别名也钳在 0…2（9 → 2）', T.SCHOOLS.every(function(k){ return T.skillLv('us', k) === 2; }));
 T.setHero('us', 'mastery', -5);
-ok('别名负数钳到 0', T.SCHOOLS.every(function(k){ return hero('us')[k] === 0; }));
+ok('别名负数钳到 0（四系都在槽里、全是基础档）',
+   T.SCHOOLS.every(function(k){ return T.skillLv('us', k) === 0; }) && hero('us').skills.length === 4,
+   T.SCHOOLS.map(function(k){ return T.skillLv('us', k); }).join('/'));
 ok('未知字段仍然拒绝', T.setHero('us', 'nope', 1) === false);
-ok('mastery 也不再是"未知字段"（别名保留）', T.setHero('us', 'mastery', 1) === true);
+ok('mastery 不再是"未知字段"（别名保留）', T.setHero('us', 'mastery', 1) === true);
+// 8 槽上限
+T.resetHeroes();
+T.SKILL_ORDER.slice(0, 8).forEach(function(k){ T.learnSkill('us', k); });
+ok('学满 8 个', hero('us').skills.length === 8, hero('us').skills.length);
+ok('第 9 个被拒绝（槽满）', T.learnSkill('us', T.SKILL_ORDER[8]).ok === false,
+   T.learnSkill('us', T.SKILL_ORDER[8]).why);
+ok('已有的技能仍能升级', T.learnSkill('us', T.SKILL_ORDER[0]).ok === true &&
+   T.skillLv('us', T.SKILL_ORDER[0]) === 1, T.skillLv('us', T.SKILL_ORDER[0]));
+T.learnSkill('us', T.SKILL_ORDER[0]);
+ok('专家封顶（再升被拒）', T.learnSkill('us', T.SKILL_ORDER[0]).ok === false &&
+   T.skillLv('us', T.SKILL_ORDER[0]) === 2, T.skillLv('us', T.SKILL_ORDER[0]));
 
 // ════════════════════════════════════════════════════════════════
-console.log('--- 2. 面板：两组渲染，12 项 × 2 方 ---');
+console.log('--- 2. 面板：7 项输入框 + 8 个技能槽 ---');
 T.resetHeroes();
 var hb = T.heroBarHtml();
-ok('输入框 24 个（12 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 24,
+ok('输入框 14 个（7 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 14,
    (hb.match(/data-stat=/g) || []).length);
-ok('面板上有 sorcery 输入框', /data-stat="sorcery"/.test(hb));
-ok('面板上有 air/earth/fire/water 输入框', T.SCHOOLS.every(function(k){
-  return hb.indexOf('data-stat="' + k + '"') >= 0;
+ok('面板上没有魔法技能输入框', T.SCHOOLS.concat(['sorcery']).every(function(k){
+  return hb.indexOf('data-stat="' + k + '"') < 0;
 }));
 ok('面板上没有 mastery 输入框', hb.indexOf('data-stat="mastery"') < 0);
-ok('两组分组标签都在', hb.indexOf('英雄') >= 0 && hb.indexOf('魔法') >= 0);
-ok('主组 7 列 / 魔法组 5 列', /hg main/.test(hb) && /hg magic/.test(hb));
-T.setHero('us', 'fire', 2);
-ok('调火系后该输入框带 on 高亮', /data-stat="fire"[^>]*class="on"/.test(T.heroBarHtml()) ||
-   /class="on"[^>]*data-stat="fire"/.test(T.heroBarHtml()), T.heroBarHtml().match(/<input[^>]*data-stat="fire"[^>]*>/));
+ok('主属性组在（hg main）', /hg main/.test(hb));
+ok('技能槽标题写 0/8', /技能槽 <b>0<\/b>\/8/.test(hb), hb.match(/技能槽[^<]*<b>\d+<\/b>\/\d+/));
+ok('8 个槽全画成空位', (hb.match(/class="empty"/g) || []).length === 8,
+   (hb.match(/class="empty"/g) || []).length);
+ok('有「升级」按钮', /data-act="levelup"/.test(hb));
+ok('有职业切换按钮', /data-act="cls"/.test(hb));
+ok('顶栏写职业与等级', /力量 · Lv 1/.test(hb), hb.match(/力量 · Lv \d+/));
+T.setHero('us', 'air', 2);
+var hb2 = T.heroBarHtml();
+ok('学了气系专家 → 槽里出现「气·专」', /气·专/.test(hb2), hb2.match(/<i class="on"[^>]*>[^<]*<\/i>/));
+ok('空位只剩 7 个', (hb2.match(/class="empty"/g) || []).length === 7,
+   (hb2.match(/class="empty"/g) || []).length);
+ok('槽位标 1/8', /技能槽 <b>1<\/b>\/8/.test(hb2));
+ok('部队数值组仍是原上下界（attack 0…20）', /data-stat="attack"[^>]*min="0" max="20"/.test(hb),
+   hb.match(/<input[^>]*data-stat="attack"[^>]*>/));
+ok('部队数值组没被技能改写（attack 输 5 就是 5）', panelInput('attack', 'us', 5) && hero('us').attack === 5,
+   hero('us').attack);
+
+// ════════════════════════════════════════════════════════════════
 
 // ════════════════════════════════════════════════════════════════
 console.log('--- 3. 四系独立：只动该系法术 ---');
@@ -180,7 +221,9 @@ ok('最高仍是 2（水 2 / 火 1）→ 魔法箭 30', dmg('magicArrow') === 30
 T.setHero('us', 'water', 0);                // 最高变 1
 ok('最高降到 1 → 魔法箭 20', dmg('magicArrow') === 20, dmg('magicArrow'));
 ok('schoolLevelOf(all) 与四系最高一致',
-   T.schoolLevelOf('us', 'all') === Math.max.apply(null, T.SCHOOLS.map(function(k){ return hero('us')[k]; })));
+   T.schoolLevelOf('us', 'all') === Math.max.apply(null, T.SCHOOLS.map(function(k){
+     return Math.max(0, T.skillLv('us', k));
+   })), T.SCHOOLS.map(function(k){ return T.skillLv('us', k); }).join('/'));
 ok('schoolLevelOf 钳在 0…2', (function(){
   T.setHero('us', 'air', 2); T.setHero('us', 'air', 99);
   return T.schoolLevelOf('us', 'air') === 2;

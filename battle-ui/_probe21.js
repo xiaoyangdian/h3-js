@@ -86,9 +86,11 @@ ok('默认攻击 1', D.attack === 1, D.attack);
 ok('默认防御 1', D.defense === 1, D.defense);
 ok('默认力量 2', D.spellpower === 2, D.spellpower);
 ok('默认知识 3（→ 30 法力）', D.knowledge === 3, D.knowledge);
-ok('默认魔法技能全 0（魔力 + 四系都在基础级）',
-   D.sorcery === 0 && D.air === 0 && D.earth === 0 && D.fire === 0 && D.water === 0,
-   [D.sorcery, D.air, D.earth, D.fire, D.water].join('/'));
+ok('默认技能槽 = 气系 + 土系，都是基础级',
+   D.skills.length === 2 && D.skills[0].id === 'air' && D.skills[0].lv === 0 &&
+   D.skills[1].id === 'earth' && D.skills[1].lv === 0,
+   JSON.stringify(D.skills));
+ok('默认没学魔力（伤害法术 +0%）', T.sorceryOf('us') === 0, T.sorceryOf('us'));
 ok('默认幸运 0（原版开局没有幸运加成）', D.luck === 0, D.luck);
 ok('默认士气 0', D.morale === 0, D.morale);
 ok('默认战术 0', D.tactics === 0, D.tactics);
@@ -96,16 +98,19 @@ ok('我方英雄开局就带这套数值',
    hero('us').attack === 1 && hero('us').knowledge === 3 && hero('us').spellpower === 2,
    JSON.stringify(hero('us')));
 ok('敌方与我方对称（同一套默认）',
-   ['attack','defense','spellpower','knowledge','sorcery','air','earth','fire','water','luck','morale','tactics']
-     .every(function(k){ return hero('us')[k] === hero('them')[k]; }));
+   ['attack','defense','spellpower','knowledge','luck','morale','tactics']
+     .every(function(k){ return hero('us')[k] === hero('them')[k]; }) &&
+   JSON.stringify(hero('us').skills) === JSON.stringify(hero('them').skills),
+   JSON.stringify(hero('us').skills));
 ok('默认值不是"全 0"（有 4 项非 0）',
    ['attack','defense','spellpower','knowledge'].filter(function(k){ return hero('us')[k] > 0; }).length === 4);
 ok('默认值都在面板上下界内', (function(){
   var specs = [['attack',0,20],['defense',0,20],['spellpower',0,20],['knowledge',0,20],
-               ['sorcery',0,2],['air',0,2],['earth',0,2],['fire',0,2],['water',0,2],
                ['luck',-3,3],['morale',-3,3],['tactics',0,3]];
   return specs.every(function(s){ var v = hero('us')[s[0]]; return v >= s[1] && v <= s[2]; });
 })());
+ok('默认技能等级都在 0…2', hero('us').skills.every(function(s){ return s.lv >= 0 && s.lv <= 2; }),
+   JSON.stringify(hero('us').skills));
 ok('默认英雄名字没被默认值表盖掉', hero('us').name === '我方英雄', hero('us').name);
 
 // ════════════════════════════════════════════════════════════════
@@ -146,8 +151,14 @@ ok('开新一局仍是 25（战役状态，不补满）', T.manaOf('us') === 25,
 // ════════════════════════════════════════════════════════════════
 console.log('--- 5. 一开局法术书就有可用法术 ---');
 T.startManual(); flush();
-ok('7 个法术全部付得起（30 法力 ≥ 最贵的 10）', T.readySpellCount('us') === 7, T.readySpellCount('us'));
-ok('最贵的闪电 10 点也在额度内', T.manaOf('us') >= T.SPELLS.lightningBolt.cost);
+ok('开局法术书里是默认已学的 5 条，全部付得起（30 法力 ≥ 最贵的 6）',
+   T.readySpellCount('us') === T.DEFAULT_SPELLS.length, T.readySpellCount('us'));
+ok('闪电还没学（要去魔法行会或路边机遇）', T.knowsSpell('us', 'lightningBolt') === false);
+ok('魔法行会能学到一条（先给等级低的）', (function(){
+  var before = T.knownSpells('us').length;
+  var r = T.visitGuild();
+  return r.ok === true && T.knownSpells('us').length === before + 1 && r.key === 'dispel';
+})(), JSON.stringify(T.knownSpells('us')));
 
 // ════════════════════════════════════════════════════════════════
 console.log('--- 6. 面板「默认」按钮 + 归零基线 ---');

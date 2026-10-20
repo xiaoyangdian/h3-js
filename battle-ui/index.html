@@ -354,6 +354,98 @@
     {id:"E4", side:"them", name:"长角魔", glyph:"魔", count:6,  perHp:110,att:10, def:10, dmg:[7,12],  speed:5,  x:13, y:5}
   ];
 
+  /* ══════════════ 怪物图鉴 BESTIARY ══════════════
+     "专门做怪物的那里"：特性、免疫、心智抗性按**物种**写在这，ROSTER 只管
+     "这一场上了谁、几只、什么数值"。换兵种 = 改 ROSTER 的 name，规则代码不动。
+
+     图鉴只收「特性」；形态类标志（ranged / size / breath / joust / pikeman / reach）
+     仍留在 ROSTER —— 它们跟着数值走，且已有 14 套探针在断言，搬过来没有收益。
+
+     字段与默认值（默认值统一在 applyTraits 里给，规则代码不再写 `|| 1`）：
+       strikes          一次行动打几下（默认 1）
+       retaliating      每回合能反击几次（默认 1；>100 视为无限）
+       enemyRetaliating false = 本物种出手时目标不能反击
+       attackAround     1 = 环攻（打周身所有敌人）-1 = 宽攻（同时邻接我与目标的敌人）
+       attackAndReturn  近战打完返回出发格
+       piercing         目标防御折算比例（40 = 无视 40% 防御）
+       regenerating     轮到自己行动时回满血
+       undead           亡灵：不掷士气、免疫恐惧
+       shootingCloud    弹射弹：远程溅射目标周围 6 格
+       fear             恐惧概率（%），只有圣龙有 —— 本切片只落字段，掷骰在下一轮
+       mindImmune       免疫恐惧（心智免疫名单）
+       splashImmune     免疫弹射弹/死亡之云的溅射（只免溅射，目标本体照吃）
+
+     出处见 参考资料.md §2.8；note 里带「原型自定」的是把**升级形态**的特性下放到
+     基础形态，属于我们的取舍，不是原版行为。 */
+  var BESTIARY = {
+    // —— 本场上阵的 9 支（名字与 ROSTER 对齐）——
+    "枪兵":   { note: "Pikeman：免疫冲锋，ROSTER 里标 pikeman" },
+    "弓箭手": { strikes: 2, derived: true,
+                note: "原型自定：二连击取自升级形态神射手（databank-creatures.php:750）" },
+    "狮鹫":   { retaliating: 2, note: "Griffin 每回合 2 次反击（:745-746）" },
+    "骑士":   { note: "Cavalier：冲锋在 ROSTER 标 joust" },
+    "绿龙":   { note: "Green Dragon：龙息在 ROSTER 标 breath" },
+    "魔童":   { },
+    "恶魔犬": { attackAround: -1, enemyRetaliating: false, derived: true,
+                note: "原型自定：宽攻+不遭反击取自升级形态三头犬 Cerberus（:773 / :730-731）" },
+    "哥革":   { shootingCloud: 1, derived: true,
+                note: "原型自定：弹射弹取自升级形态马各 Magog（:813-815）" },
+    "长角魔": { note: "Horned Demon：原版无特性" },
+
+    // —— 图鉴备着、当前不上阵（探针可直接改用；换阵容时只动 ROSTER）——
+    "九头怪":     { attackAround: 1, note: "Hydra 环攻（:755-756）" },
+    "巨兽":       { piercing: 40, note: "Behemoth 无视 40% 防御（:782）" },
+    "远古巨兽":   { piercing: 80, note: "Ancient Behemoth 无视 80% 防御（:783）" },
+    "幽灵":       { regenerating: true, undead: true, mindImmune: true, splashImmune: true,
+                    note: "幽灵：重生（:801）+ 亡灵" },
+    "尸王":       { regenerating: true, undead: true, mindImmune: true, splashImmune: true,
+                    note: "尸王/尸王领主：重生（:801-803）+ 亡灵" },
+    "鹰身女妖王": { attackAndReturn: true, enemyRetaliating: false,
+                    note: "attackAndReturn（:762）+ 不遭反击" },
+    "圣龙":       { fear: 10, mindImmune: true, note: "Azure Dragon 词条：10% 冻结一轮" },
+    "石魔像":     { mindImmune: true, splashImmune: true, note: "魔像：免疫恐惧与死亡之云" },
+    "魔法元素":   { mindImmune: true, splashImmune: true, note: "元素：免疫恐惧与死亡之云" },
+    "石像鬼":     { splashImmune: true, note: "石像鬼：免疫死亡之云溅射" },
+    "投石车":     { mindImmune: true, splashImmune: true, note: "战争机器：不掷士气、免疫心智" }
+  };
+
+  // 把图鉴条目摊平到单位上。所有默认值集中在这里，规则代码只读 u.xxx。
+  function applyTraits(u, kind) {
+    var t = BESTIARY[kind] || {};
+    u.kind = kind;
+    u.strikes = t.strikes || 1;
+    u.retaliating = t.retaliating || 1;
+    u.enemyRetaliating = t.enemyRetaliating !== false;
+    u.attackAround = t.attackAround || 0;
+    u.attackAndReturn = !!t.attackAndReturn;
+    u.piercing = t.piercing || 0;
+    u.regenerating = !!t.regenerating;
+    u.undead = !!t.undead;
+    u.shootingCloud = t.shootingCloud || 0;
+    u.fear = t.fear || 0;                       // 预留：恐惧掷骰在士气/恐惧切片
+    u.mindImmune = !!t.mindImmune || !!u.undead;
+    u.splashImmune = !!t.splashImmune || !!u.undead;
+    u.retaliationsLeft = u.retaliating;
+    u.retaliated = false;
+  }
+
+  // 特性名（卡片与日志用）
+  function traitNames(u) {
+    var out = [];
+    if (u.strikes > 1) out.push("二连击");
+    if (u.retaliating > 1) out.push(u.retaliating > 100 ? "无限反击" : "反击 " + u.retaliating);
+    if (!u.enemyRetaliating) out.push("不遭反击");
+    if (u.attackAround === 1) out.push("环攻");
+    if (u.attackAround === -1) out.push("宽攻");
+    if (u.attackAndReturn) out.push("打完就回");
+    if (u.piercing) out.push("穿刺 " + u.piercing + "%");
+    if (u.regenerating) out.push("重生");
+    if (u.undead) out.push("亡灵");
+    if (u.shootingCloud) out.push("弹射弹");
+    if (u.fear) out.push("恐惧 " + u.fear + "%");
+    return out;
+  }
+
   var units, order, roundNo, selected, hasMoved, moveMap, atkSet, over;
   var hoverUnit = null, pendingAttack = null, lastPT = "mouse";
   var busy = false;           // 走位动画进行中，屏蔽输入
@@ -625,8 +717,9 @@
       u.hp = u.maxHp;
       u.startCount = t.count;   // 战报用：开局编制
       u.dead = false;
-      u.retaliated = false;
       u.defending = false;
+      // 特性一律查图鉴（怪物那边的唯一入口）；ROSTER 有 kind 就用 kind，没有就用 name
+      applyTraits(u, t.kind || t.name);
       // 双格单位的尾巴在哪一侧：-1 左 / +1 右。默认"背对敌人"，
       // 走路和出手时会按需要调头（见 fitDir / attackFace）
       u.dir = (t.side === "us") ? -1 : 1;
@@ -642,6 +735,7 @@
     }).map(function(u){ return u.id; });
     units.forEach(function(u){
       u.retaliated = false;
+      u.retaliationsLeft = u.retaliating || 1;   // 多次反击：每回合回满次数
       u.defending = false;
     });
     log("—— 第 " + roundNo + " 回合 ——", "sys");
@@ -676,6 +770,7 @@
       return;
     }
     var act = current();
+    if (act && act.regenerating && act.hp < act.maxHp) regenUnit(act);   // 重生：轮到自己行动时
     restFace(act);                       // 轮到这个单位：先把头摆向敌人（默认站位）
     selected = null; hasMoved = false; moveMap = new Map(); atkSet = new Set();
     turnClaimed = false;      // 新的一手：清掉"谁来执行"的去重标志
@@ -796,9 +891,12 @@
        R1 = 0.025×(防-攻) 负差封底 -70%（差 ≥28 起按 0.7 算）→ 整体最低 0.3
        R5 = 0.5           远程单位被迫近战（melee penalty，NO_MELEE_PENALTY 可免）
      关键：I1/I4/I5 在同一括号里相加，不是各自相乘。
+     穿刺（巨兽 40% / 远古巨兽 80%）：**先把目标防御打折**再进攻防差，
+             即 databank.php 的 `1 - piercing/100` 乘在防御上，不是乘在伤害上。
      近战减半与反击：反击永远按近战算，远程单位反击同样减半。 */
   function dmgMult(a, d, joustHexes, shooting, lucky) {
-    var diff = a.att - effDef(d);
+    var def = effDef(d) * (1 - (a.piercing || 0) / 100);
+    var diff = a.att - def;
     var I1 = diff > 0 ? Math.min(3, 0.05 * diff) : 0;
     var R1 = diff < 0 ? Math.min(0.7, 0.025 * -diff) : 0;
     var I5 = (a.joust && joustHexes && !d.pikeman) ? 0.05 * joustHexes : 0;
@@ -850,6 +948,16 @@
     } else {
       target.count = Math.ceil(target.hp / target.perHp);
     }
+  }
+
+  /* 重生（幽灵/尸王/巨魔）：轮到它行动时回满血，连阵亡的数量一起拉回。
+     被整队消灭的单位不进行动队列，所以"死了不能自愈"是自动成立的。 */
+  function regenUnit(u) {
+    var lost = u.startCount - u.count;
+    u.hp = u.maxHp;
+    u.count = u.startCount;
+    log("<b>" + u.name + "</b> 重生 · 回满 " + u.maxHp + " 生命" +
+        (lost > 0 ? "（复活 " + lost + " 只）" : ""), u.side);
   }
 
   function floatText(x, y, txt, cls, big, delay, dy) {
@@ -1153,20 +1261,68 @@
     })();
   }
 
-  function doAttack(a, d, steps, shooting) {
-    // 兼容直接调用（测试/重放）：没显式说明射击与否，就按"远程 + 有弹药 + 没被贴身"推断
-    // （贴身时哪怕有弹药也是近战，伤害要走减半——推断错了会把近战算成射击）
-    if (shooting === undefined) shooting = !!a.ranged && (a.shots || 0) > 0 && !inMelee(a);
-    // 出手前把头扭向目标：占位不变，只是换哪一格当"头"
-    if (!shooting) faceTarget(a, d);
-    var from = { x: a.x, y: a.y, dir: dirOf(a) };
-    var bt = breathInfo(a, from, d, steps || 0);
+  // 环攻（attackAround: 1）/ 宽攻（-1）的额外受击者：原版只波及敌人
+  //   1  = 攻击者周围所有相邻敌人（九头怪/心灵元素）
+  //  -1 = 与攻击者、目标**都**相邻的敌人（地狱三头犬，横向最多 3 个）
+  function aroundTargets(a, d) {
+    var out = [];
+    if (!a.attackAround) return out;
+    alive(a.side === "us" ? "them" : "us").forEach(function(e){
+      if (e === d || e.dead) return;
+      if (a.attackAround === 1) {
+        if (unitDist(a, e) === 1) out.push(e);
+      } else if (unitDist(a, e) === 1 && unitDist(d, e) === 1) {
+        out.push(e);
+      }
+    });
+    return out;
+  }
+
+  // 弹射弹的溅射目标：目标周围 6 格里的所有单位（含友军），不含目标自己
+  function cloudTargets(a, d) {
+    if (!a.shootingCloud) return [];
+    var seen = {}, out = [];
+    cellsOf(d).forEach(function(c){
+      neighbors(c[0], c[1]).forEach(function(n){
+        var k = key(n[0], n[1]);
+        if (seen[k]) return;
+        seen[k] = 1;
+        if (coversHex(d, n[0], n[1])) return;      // 双格目标自己的另一半
+        var u = unitAt(n[0], n[1]);
+        if (u && !u.dead && u !== d) out.push(u);
+      });
+    });
+    return out;
+  }
+
+  // 附带伤害（环攻 / 弹射）：独立掷骰、独立结算，不触发受害者的反击
+  function hitSide(a, e, delay, tag, shooting) {
+    var h = rollDamage(a, e, 0, !!shooting);
+    var amt = h.amount, before = e.count, friend = e.side === a.side;
+    applyDamage(e, amt);
+    log("<b>" + tag + "</b> 波及 <b>" + e.name + "</b> · 造成 " + amt + " 伤害" +
+        (h.lucky ? "（幸运一击）" : "") + "，击杀 " + (before - e.count) +
+        (friend && tag === "弹射" ? "（友军，弹射不辨敌我）" : ""), a.side);
+    setTimeout(function(){
+      fxBurst(e.x, e.y, tag === "弹射" ? "#8fbf7a" : "#e08a3c", 0.88);
+      animateHit(e);
+      floatText(e.x, e.y, "-" + amt, e.side === "us" ? "them" : "us", amt >= e.maxHp * 0.2);
+    }, delay);
+    if (e.dead) {
+      log("<b>" + e.name + "</b> 被消灭", "sys");
+      setTimeout(function(){ removeUnitEl(e); }, delay + 60);
+      checkEnd();
+    }
+  }
+
+  // 一次打击。二连击（strikes: 2）会把它调两次：各自掷骰、各吃一次反击。
+  function strikeOnce(a, d, steps, shooting, bt, sIdx) {
+    var melee = !shooting;
     // 真实掷骰：DMGb 逐只掷 + 幸运检定（一次攻击共用一次检定，龙息第二目标同样受益）
-    var hit = rollDamage(a, d, steps || 0, shooting);
+    var hit = rollDamage(a, d, steps, shooting);
     var amount = hit.amount, lucky = hit.lucky;
     var before = d.count;
-    var melee = !shooting;
-    var hitAt = melee ? 150 : 250;                                   // 视觉命中帧
+    var hitAt = (melee ? 150 : 250) + sIdx * 240;                    // 视觉命中帧（第二击顺延）
     var ang = Math.atan2(d.y - a.y, d.x - a.x) * 180 / Math.PI;
     var tint = a.side === "us" ? "#ffe6a8" : "#ffd2c8";
     var heavy = amount >= d.maxHp * 0.2;                              // 大字伤害
@@ -1174,14 +1330,11 @@
 
     // 出手：先给动作，伤害落点延到命中帧
     fxLunge(a, d.x, d.y, shooting);
-    if (shooting) {
-      a.shots = Math.max(0, (a.shots || 0) - 1);
-      fxProjectile(a, d);
-    }
-    if (bt && bt.unit) fxBreath(from, bt.hex);
+    if (shooting) fxProjectile(a, d);
 
     applyDamage(d, amount);
-    log("<b>" + a.name + "</b> " + (shooting ? "射击" : "攻击") + " <b>" + d.name + "</b> · 造成 " + amount +
+    log("<b>" + a.name + "</b>" + (sIdx > 0 ? "（第 " + (sIdx + 1) + " 击）" : "") +
+        " " + (shooting ? "射击" : "攻击") + " <b>" + d.name + "</b> · 造成 " + amount +
         " 伤害" + (lucky ? "（幸运一击）" : "") +
         (!shooting && a.ranged && !a.noMeleePenalty ? "（近战减半）" : "") +
         "，击杀 " + (before - d.count) + "（剩 " + d.count + "）", a.side);
@@ -1199,9 +1352,10 @@
 
     // 龙息：目标身后那格一起烧，不额外反击；原版连友军也照打。
     // 幸运判定按 HotA 语义作用于本次攻击的每个受击目标（lucky 复用同一检定）。
-    if (bt && bt.unit) {
+    // 二连击的龙息只烧一次（原版没有同时带这两个特性的兵）。
+    if (bt && bt.unit && sIdx === 0) {
       var bu = bt.unit;
-      var bHit = rollDamage(a, bu, steps || 0, false, lucky);
+      var bHit = rollDamage(a, bu, steps, false, lucky);
       var bAmt = bHit.amount;
       var bBefore = bu.count, bFriend = bu.side === a.side;
       applyDamage(bu, bAmt);
@@ -1221,30 +1375,77 @@
       }
     }
 
+    // 环攻 / 宽攻：主目标之外的那些，各自独立掷骰
+    aroundTargets(a, d).forEach(function(e){ hitSide(a, e, hitAt + 60, "环攻", false); });
+
+    // 弹射弹：溅射部分对亡灵/魔像/元素/石像鬼/战争机器无效，但目标本体照吃
+    if (shooting && a.shootingCloud) {
+      cloudTargets(a, d).forEach(function(e){
+        if (e.splashImmune) {
+          log("<b>弹射</b> 对 <b>" + e.name + "</b> 无效（亡灵/构装免疫）", "sys");
+          return;
+        }
+        hitSide(a, e, hitAt + 70, "弹射", true);
+      });
+    }
+
     if (d.dead) {
       log("<b>" + d.name + "</b> 被消灭", "sys");
       setTimeout(function(){ removeUnitEl(d); }, hitAt + 60);
       checkEnd();
       return;
     }
-    if (!shooting && !d.retaliated && unitDist(a, d) === 1) {
-      d.retaliated = true;
+    // 反击：出手方「不遭反击」/ 目标反击次数用尽 / 没贴身 → 都不反
+    if (!shooting && a.enemyRetaliating !== false && unitDist(a, d) === 1 &&
+        (d.retaliationsLeft || 0) > 0) {
+      d.retaliationsLeft--;
+      if (d.retaliationsLeft <= 0) d.retaliated = true;
       // 反击永远是近战：远程单位反击同样减半；反击自己也做幸运检定
       var back = rollDamage(d, a, 0, false);
-      var bAmt = back.amount;
-      var bBefore = a.count;
+      var backAmt = back.amount;
+      var backBefore = a.count;
       var backAng = Math.atan2(a.y - d.y, a.x - d.x) * 180 / Math.PI;
-      applyDamage(a, bAmt);
+      applyDamage(a, backAmt);
       later(function(){
         fxLunge(d, a.x, a.y);
         fxSlash(a.x, a.y, backAng + 90, "#ffc9c0");
         fxBurst(a.x, a.y, "#d98b7c", 0.9);
-        floatText(a.x, a.y, "-" + bAmt, a.side === "us" ? "them" : "us", bAmt >= a.maxHp * 0.2);
+        floatText(a.x, a.y, "-" + backAmt, a.side === "us" ? "them" : "us", backAmt >= a.maxHp * 0.2);
         animateHit(a);
-        log("<b>" + d.name + "</b> 反击 · 造成 " + bAmt + " 伤害" + (back.lucky ? "（幸运一击）" : "") + "，击杀 " + (bBefore - a.count), d.side);
+        log("<b>" + d.name + "</b> 反击 · 造成 " + backAmt + " 伤害" + (back.lucky ? "（幸运一击）" : "") + "，击杀 " + (backBefore - a.count), d.side);
         if (a.dead) { log("<b>" + a.name + "</b> 被消灭", "sys"); removeUnitEl(a); }
         render(); checkEnd();
       }, 300);
+    }
+  }
+
+  // 一次行动 → 若干次打击（strikes），事后处理「打完就回」
+  function doAttack(a, d, steps, shooting, origin) {
+    // 兼容直接调用（测试/重放）：没显式说明射击与否，就按"远程 + 有弹药 + 没被贴身"推断
+    // （贴身时哪怕有弹药也是近战，伤害要走减半——推断错了会把近战算成射击）
+    if (shooting === undefined) shooting = !!a.ranged && (a.shots || 0) > 0 && !inMelee(a);
+    // 出手前把头扭向目标：占位不变，只是换哪一格当"头"
+    if (!shooting) faceTarget(a, d);
+    var from = { x: a.x, y: a.y, dir: dirOf(a) };
+    var bt = breathInfo(a, from, d, steps || 0);
+
+    // 弹药按「一次行动 1 发」扣：二连击的射击在原版（SoD）算 1 支
+    if (shooting) a.shots = Math.max(0, (a.shots || 0) - 1);
+    if (bt && bt.unit) fxBreath(from, bt.hex);
+
+    var n = Math.max(1, a.strikes || 1);
+    for (var s = 0; s < n; s++) {
+      if (over || a.dead || d.dead) break;     // 第一击打死目标就不出第二击
+      strikeOnce(a, d, steps || 0, shooting, bt, s);
+    }
+
+    // 打完就回（鹰身女妖王）：近战沿原路退回出发格，不留在目标旁边
+    if (!shooting && a.attackAndReturn && origin && !a.dead &&
+        (a.x !== origin.x || a.y !== origin.y)) {
+      a.x = origin.x; a.y = origin.y;
+      if (origin.dir === 1 || origin.dir === -1) a.dir = origin.dir;
+      log("<b>" + a.name + "</b> 打完就回 · 退回 (" + a.x + "," + a.y + ")", a.side);
+      render();
     }
   }
 
@@ -1425,11 +1626,13 @@
     if (opts.length === 1) {
       return "点击 " + t.name + " 由 (" + sp.x + "," + sp.y + ") 发起攻击 · 预计 " +
         pv.r.min + "–" + pv.r.max + (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "") +
+        extraText(pv) +
         (pv.shooting ? "" : penaltyNote(act));
     }
     return t.name + " × " + t.count + " · " + opts.length + " 个位置可选 · 当前 (" +
       sp.x + "," + sp.y + ") " + sp.cost + " 步 → 伤害 " + pv.r.min + "–" + pv.r.max +
       (pv.back ? " · 反击 " + pv.back.min + "–" + pv.back.max : "") +
+      extraText(pv) +
       (pv.shooting ? "" : penaltyNote(act)) +
       breathText(pv, act) +
       (lastPT === "touch" ? " · 点一个格子从此处出手" : " · 扫格子比较，点格子直接出手");
@@ -1484,8 +1687,9 @@
     if (best) {
       // 原地不动才可能射击；一旦走位就只能是近战（弓手规则）
       var willShoot = aiCanShoot && best.steps === 0;
+      var origin = { x: u.x, y: u.y, dir: dirOf(u) };     // 打完就回要用
       walkTo(u, (best.tx === u.x && best.ty === u.y) ? null : { x: best.tx, y: best.ty }, function(){
-        doAttack(u, best.f, best.steps, willShoot);
+        doAttack(u, best.f, best.steps, willShoot, origin);
         render();
         if (!over) endActorSoon(620);
       });
@@ -1799,13 +2003,27 @@
       for (var i = 0; i < cs.length; i++) m = Math.min(m, dist(ap.x, ap.y, cs[i][0], cs[i][1]));
       return m === 1;
     })();
-    var back = (!shooting && !t.retaliated && meets) ? calcDamage(t, act, 0, false) : null;
+    var back = (!shooting && act.enemyRetaliating !== false && (t.retaliationsLeft || 0) > 0 && meets)
+      ? calcDamage(t, act, 0, false) : null;
     return {
       opts: opts, ap: ap, steps: steps, r: r, back: back, shooting: shooting,
+      around: aroundTargets(act, t),                                  // 环攻/宽攻的额外目标
+      splash: (shooting && act.shootingCloud) ? cloudTargets(act, t) : [],   // 弹射弹溅射范围
       breath: breathInfo(act, { x: ap ? ap.x : act.x, y: ap ? ap.y : act.y,
                                 dir: ap && ap.dir ? ap.dir : dirOf(act) }, t, steps),
       kills: Math.min(t.count, Math.floor(r.avg / t.perHp))
     };
+  }
+
+  // 多目标特性的提示后缀（没有就是空串，别让提示条变长）
+  function extraText(pv) {
+    var out = "";
+    if (pv.around && pv.around.length) out += " · 环攻/宽攻波及 " + pv.around.length + " 只";
+    if (pv.splash && pv.splash.length) {
+      var edible = pv.splash.filter(function(u){ return !u.splashImmune; }).length;
+      out += " · 弹射 " + edible + " 只" + (edible < pv.splash.length ? "（" + (pv.splash.length - edible) + " 只免疫）" : "");
+    }
+    return out;
   }
 
   function markHex(x, y, cls) {
@@ -2088,12 +2306,14 @@
     render();
     updateConfirmBar();
 
+    // 出发格（打完就回要退这里）：必须在 walkTo 之前记下来
+    var origin = { x: act.x, y: act.y, dir: dirOf(act) };
     var strike = function(){
       hasMoved = true;
       // 到位后按选定的朝向站好（尾巴甩在远离目标的一侧），再出手
       if (onSelf) { act.x = pv.ap.x; act.y = pv.ap.y; }
       if (isWide(act) && !shooting) act.dir = face;
-      doAttack(act, target, steps, shooting);
+      doAttack(act, target, steps, shooting, origin);
       render();
       if (!over) endActorSoon(620);
     };
@@ -2135,7 +2355,7 @@
       setHint("对 " + u.name + " × " + u.count + "：预计 " + pv2.r.min + "–" + pv2.r.max +
         " · 击杀 " + pv2.kills +
         (pv2.back ? " · 反击 " + pv2.back.min + "–" + pv2.back.max : " · 无反击") +
-        breathText(pv2, act) +
+        breathText(pv2, act) + extraText(pv2) +
         (pv2.shooting ? " · 射击" : " · 近战" + penaltyNote(act)));
     } else {
       setHint(u.name + " × " + u.count + " · " + opts.length +
@@ -2192,7 +2412,9 @@
         '<h3>当前行动</h3>' +
         '<div class="who"><div class="dot us">' + act.glyph + '</div>' +
         '<div><div class="n">' + act.name + (act.breath ? " · 龙息" : "") + (act.defending ? " · 防御中" : "") + '</div>' +
-        '<div class="c">× ' + act.count + ' · 生命 ' + Math.max(0, act.hp) + '/' + act.maxHp + '</div></div></div>' +
+        '<div class="c">× ' + act.count + ' · 生命 ' + Math.max(0, act.hp) + '/' + act.maxHp + '</div>' +
+        (traitNames(act).length ? '<div class="c">特性：' + traitNames(act).join(' · ') + '</div>' : '') +
+        '</div></div>' +
         '<div class="stats">' +
         '<div>攻 <b>' + act.att + '</b></div><div>防 <b>' + act.def + '</b></div>' +
         '<div>伤 <b>' + act.dmg[0] + '–' + act.dmg[1] + '</b></div><div>速 <b>' + act.speed + '</b></div>' +

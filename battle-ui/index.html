@@ -491,6 +491,18 @@
       return { att: u.att, def: u.def, baseAtt: u.baseAtt, baseDef: u.baseDef,
                luck: u.luck, morale: u.morale, tactics: u.tactics, spellpower: u.spellpower };
     };
+    box.rand = function(){ return rand(); };
+    box.setRand = setRand;
+    box.seedRand = seedRand;
+    box.moraleRoll = moraleRoll;
+    box.freezeCheck = freezeCheck;
+    box.endActor = endActor;
+    box.nextActor = nextActor;
+    // 用方法而不是 getter：__T 是探针每次重建的普通对象，defineProperty 不可重复定义，
+    // 而 init() 每局都会再进来一次。
+    box.moved = function(){ return hasMoved; };
+    box.setMoved = function(v){ hasMoved = !!v; };   // 仅测试：模拟"这一手已经动过"
+    box.selectedUnit = function(){ return selected; };
   }
 
   /* ══════════════ 怪物图鉴 BESTIARY ══════════════
@@ -509,6 +521,7 @@
        piercing         目标防御折算比例（40 = 无视 40% 防御）
        regenerating     轮到自己行动时回满血
        undead           亡灵：不掷士气、免疫恐惧
+       noMorale         不掷士气（亡灵与战争机器；undead 自动带上）
        shootingCloud    弹射弹：远程溅射目标周围 6 格
        fear             恐惧概率（%），只有圣龙有 —— 本切片只落字段，掷骰在下一轮
        mindImmune       免疫恐惧（心智免疫名单）
@@ -545,7 +558,8 @@
     "石魔像":     { mindImmune: true, splashImmune: true, note: "魔像：免疫恐惧与死亡之云" },
     "魔法元素":   { mindImmune: true, splashImmune: true, note: "元素：免疫恐惧与死亡之云" },
     "石像鬼":     { splashImmune: true, note: "石像鬼：免疫死亡之云溅射" },
-    "投石车":     { mindImmune: true, splashImmune: true, note: "战争机器：不掷士气、免疫心智" }
+    "投石车":     { noMorale: true, mindImmune: true, splashImmune: true,
+                    note: "战争机器：不掷士气（creature_morale 钳 0）、免疫心智" }
   };
 
   // 把图鉴条目摊平到单位上。所有默认值集中在这里，规则代码只读 u.xxx。
@@ -560,6 +574,7 @@
     u.piercing = t.piercing || 0;
     u.regenerating = !!t.regenerating;
     u.undead = !!t.undead;
+    u.noMorale = !!t.noMorale || !!u.undead;    // 亡灵与战争机器都不掷士气
     u.shootingCloud = t.shootingCloud || 0;
     u.fear = t.fear || 0;                       // 预留：恐惧掷骰在士气/恐惧切片
     u.mindImmune = !!t.mindImmune || !!u.undead;
@@ -915,6 +930,35 @@
     }
     var act = current();
     if (act && act.regenerating && act.hp < act.maxHp) regenUnit(act);   // 重生：轮到自己行动时
+
+    // 回合开始：恐惧 / 坏士气 → 冻结，整轮作废。
+    // actsThisTurn 记 0，于是 endActor 里的好士气判定（=== 1）不会对一个没行动过的单位触发。
+    if (act) act.actsThisTurn = 0;
+    var frozen = act && !over ? freezeCheck(act) : null;
+    if (frozen) {
+      if (frozen === "fear") {
+        log("<b>" + act.name + "</b> 被圣龙震慑 · 陷入恐惧，失去本轮行动", "sys");
+        floatText(act.x, act.y, "恐惧", act.side, true);
+      } else {
+        log("<b>" + act.name + "</b> 士气低落 · 陷入恐慌，失去本轮行动", "sys");
+        floatText(act.x, act.y, "恐慌", act.side, true);
+      }
+      render();
+      later(function(){
+        if (act !== current() || over) return;      // 过期回调防御：这一手可能已易主
+        endActor();
+      }, quickMode ? 0 : 520);
+      return;
+    }
+
+    beginHand(act, 1);
+  }
+
+  /* 开始一手。正常回合与"好士气追加行动"共用这里，保证"完整一次行动"的口径一致：
+     移动力、已移动标记、候选格全部复位，可移可打。
+     actsThisTurn：1 = 本回合第一次行动（结束后可掷好士气），2 = 追加的行动（不再掷）。 */
+  function beginHand(act, actsThisTurn) {
+    act.actsThisTurn = actsThisTurn;
     restFace(act);                       // 轮到这个单位：先把头摆向敌人（默认站位）
     selected = null; hasMoved = false; moveMap = new Map(); atkSet = new Set();
     turnClaimed = false;      // 新的一手：清掉"谁来执行"的去重标志
@@ -958,6 +1002,16 @@
   function setHint(s) { document.getElementById("hint").textContent = s; }
 
   function endActor() {
+    var act = current();
+    /* 好士气：只在**本回合第一次**行动结束后掷一次；追加的行动（actsThisTurn=2）不再掷，
+       否则 1/24 的事件会自己滚成一串。追加的是**完整一次行动**（可移可打），
+       但反击额度是"被动能力"、按回合计，不因为多给一手行动就回满。 */
+    if (act && !over && act.actsThisTurn === 1 && moraleRoll(act) === "good") {
+      log("<b>" + act.name + "</b> 士气高涨 · 追加一次行动", act.side);
+      floatText(act.x, act.y, "士气高涨", act.side, true);
+      beginHand(act, 2);
+      return;
+    }
     if (order.length) order.shift();
     nextActor();
   }
@@ -1058,22 +1112,77 @@
     };
   }
 
+  /* ══════════════ 随机数入口 ══════════════
+     **规则**掷骰一律走 rand()，**特效**随机（粒子/飞行弧线）仍直接用 Math.random ——
+     画面每次都该不一样，而规则必须可复现，探针要能把随机换成定值序列。
+
+     默认 Math.random；seedRand(种子) 换成确定性序列，种子缺省取时间毫秒
+     （时间毫秒只能当**种子**，不能拿来直接判定概率——那样探针就成了碰运气）。
+     探针用 setRand(fn) 注入定值/序列。 */
+  var rand = Math.random;
+  function setRand(fn) { rand = (typeof fn === "function") ? fn : Math.random; }
+  function seedRand(seed) {
+    var s = (seed === undefined ? Date.now() : seed) >>> 0;
+    rand = function(){                                  // mulberry32
+      s = (s + 0x6D2B79F5) >>> 0;
+      var t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    return s;
+  }
+
   // DMGb 的真实掷骰（不是在 min–max 之间均匀抽一个数）
   function rollBase(a) {
     var n = a.count, lo = a.dmg[0], hi = a.dmg[1], s = 0, i;
     if (n <= 10) {
-      for (i = 0; i < n; i++) s += lo + Math.floor(Math.random() * (hi - lo + 1));
+      for (i = 0; i < n; i++) s += lo + Math.floor(rand() * (hi - lo + 1));
       return s;
     }
-    for (i = 0; i < 10; i++) s += lo + Math.floor(Math.random() * (hi - lo + 1));
+    for (i = 0; i < 10; i++) s += lo + Math.floor(rand() * (hi - lo + 1));
     return Math.floor(s * n / 10);
   }
 
   // 幸运检定：+N → N/24 概率触发幸运一击（+1=1/24 … +3=1/8）。
-  // 负幸运（HotA 才有）不实现；幸运值来自 u.luck，默认 0（英雄/宝物层尚未建模）。
+  // 负幸运（HotA 才有）不实现；幸运值来自 u.luck（英雄容器 §2.9）。
   function rollLuck(a) {
     var L = (a && a.luck) || 0;
-    return L > 0 && Math.floor(Math.random() * 24) < L;
+    return L > 0 && Math.floor(rand() * 24) < L;
+  }
+
+  /* ══════════════ 士气 / 恐惧 ══════════════
+     士气压 N/24：正 N = 好士气（行动**后**追加一次完整行动），
+     负 N 概率**翻倍**（-1=2/24=1/12、-2=4/24=1/6、-3=6/24=1/4），触发即坏士气
+     （回合**开始**冻结，丢整轮）。好/坏不对称是原版行为，不是笔误。
+
+     两种单位不掷：亡灵（`undead`）、战争机器（`noMorale`）。
+
+     恐惧：场上有存活圣龙时，**敌方**单位回合开始 10% 冻结丢一轮，与圣龙数量无关；
+     免疫 = `mindImmune`（圣龙自己/魔像/元素/亡灵/战争机器）。
+
+     本函数只管"掷没掷中"，不管后果（后果在 nextActor / endActor 里落地）。 */
+  function moraleRoll(u) {
+    if (!u || u.dead || u.undead || u.noMorale) return null;   // 亡灵 / 战争机器不掷
+    var m = u.morale || 0;
+    if (m === 0) return null;
+    var ticks = m > 0 ? m : -m * 2;        // 负值概率翻倍
+    if (rand() * 24 >= ticks) return null;
+    return m > 0 ? "good" : "bad";
+  }
+
+  // 回合开始的冻结检定：恐惧优先于坏士气（原版两次独立检定，先后无明文 → 原型自定）
+  function freezeCheck(u) {
+    if (!u || u.dead) return null;
+    if (!u.mindImmune) {
+      var p = 0;
+      units.forEach(function(x){
+        if (!x.dead && x.side !== u.side && x.fear > p) p = x.fear;   // 多只不叠加，取最大
+      });
+      if (p > 0 && rand() * 100 < p) return "fear";
+    }
+    if (moraleRoll(u) === "bad") return "morale";
+    return null;
   }
 
   // 一次真实伤害：掷基础骰 + 幸运检定；lucky 传入时复用该次判定（龙息第二目标）

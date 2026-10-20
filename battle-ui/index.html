@@ -134,7 +134,7 @@
   .heroes{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
   .heroes .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink3);margin-bottom:5px}
   .heroes .hd b{font-weight:500;color:var(--ink2);font-size:11px}
-  .hg{display:grid;grid-template-columns:26px repeat(6,1fr);gap:3px;align-items:center}
+  .hg{display:grid;grid-template-columns:26px repeat(8,1fr);gap:3px;align-items:center}
   .hg + .hg{margin-top:3px}
   .hg .hn{font-size:12px;color:var(--ink2)}
   .hg .hh{font-size:10px;color:var(--ink3);text-align:center;line-height:1}
@@ -146,6 +146,24 @@
   .hg input:focus{outline:none;border-color:var(--ink3);background:#fff}
   .hg input::-webkit-outer-spin-button,.hg input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .hg input.on{background:#fff4d8;border-color:#e0b855;font-weight:600}
+  .heroes .mana{font-size:11px;color:var(--ink3);margin:4px 0 2px;letter-spacing:.2px}
+  .heroes .mana b{color:#3b5d86;font-variant-numeric:tabular-nums}
+
+  /* 法术书：只列已实现的法术，法力/本回合额度不足时置灰 */
+  .spellbook{background:#fff;border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:12px}
+  .spellbook .hd{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink3);margin-bottom:7px}
+  .spellbook .hd b{font-weight:500;color:var(--ink2);font-size:11px}
+  .spellbook .grid{display:grid;grid-template-columns:1fr 1fr;gap:5px}
+  .spellbook button{
+    text-align:left;padding:5px 7px;line-height:1.35;border-radius:7px;background:#fafbf6;
+    display:flex;flex-direction:column;gap:1px;
+  }
+  .spellbook button .nm{font-size:12px;color:var(--ink)}
+  .spellbook button .ds{font-size:10px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .spellbook button .cost{float:right;font-size:10px;color:#3b5d86;font-variant-numeric:tabular-nums}
+  .spellbook button.ready{border-color:#9db8d6;background:#eef4fb}
+  .spellbook button:disabled{opacity:.45}
+  .spellbook .tip{font-size:10.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
 
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:12px;font-weight:500;color:var(--ink3)}
@@ -209,6 +227,7 @@
 
     <aside>
       <div class="heroes" id="heroBar"></div>
+      <div class="spellbook" id="spellBook"></div>
       <div class="card" id="curCard" style="display:none"></div>
       <div class="btns">
         <button id="btnDefend">防御</button>
@@ -382,27 +401,43 @@
      字段与消费方（出处见 参考资料.md §2.6 / §2.8）：
        attack      加到每只生物的**攻击**上，进 I1 的攻防差（不是乘在伤害上）
        defense     加到每只生物的**防御**上，进 R1 与反击
-       spellpower  魔法伤害与持续的乘子 —— 魔法切片读，当前只存
+       spellpower  法术伤害的加项与**持续回合数**（持续 = 力量回合，见 SPELLS 段）
+       knowledge   知识：每点 +10 最大法力（原版 spell points 上限 = 10×知识）
+       mastery     魔法精通 0=初级 / 1=中级 / 2=专家。原版按**每个学派**分别升级，
+                   原型压成一个全局值（没有技能树，见 参考资料.md §2.10）
        luck        幸运，+N → N/24 触发幸运一击（rollLuck 已在读 u.luck）
-       morale      士气，+N → N/24（好=行动后追加 / 坏=回合开始冻结）—— 士气切片读
-       tactics     战术等级 0/1/2/3 = 布阵 0/3/5/7 行 —— 战术切片读
+       morale      士气，+N → N/24（好=行动后追加 / 坏=回合开始冻结）
+       tactics     战术等级 0/1/2/3 = 布阵 0/3/5/7 行 —— 战术切片（未做）
 
      默认全 0 = "没有英雄"。此时每支部队的 att/def 与引入英雄前逐位相同，
-     既有 14 套探针的断言一条都不受影响。 */
+     既有探针的断言一条都不受影响。 */
   var HEROES = {
-    us:   { name: "我方英雄", attack: 0, defense: 0, spellpower: 0, luck: 0, morale: 0, tactics: 0 },
-    them: { name: "敌方英雄", attack: 0, defense: 0, spellpower: 0, luck: 0, morale: 0, tactics: 0 }
+    us:   { name: "我方英雄", attack: 0, defense: 0, spellpower: 0, knowledge: 0, mastery: 0, luck: 0, morale: 0, tactics: 0 },
+    them: { name: "敌方英雄", attack: 0, defense: 0, spellpower: 0, knowledge: 0, mastery: 0, luck: 0, morale: 0, tactics: 0 }
   };
 
   // 面板字段：key / 表头 / 悬浮说明 / 下界 / 上界（原版 luck·morale 是 -3…+3，tactics 0…3）
   var HSTATS = [
     ["attack",     "攻", "攻击：加到每只生物的攻击上，进 I1 攻防差",        0, 20],
     ["defense",    "防", "防御：加到每只生物的防御上，进 R1 与反击",        0, 20],
-    ["spellpower", "力", "力量：魔法伤害与持续的乘子（魔法切片才读）",      0, 20],
+    ["spellpower", "力", "力量：法术伤害加项，也是法术持续回合数",          0, 20],
+    ["knowledge",  "识", "知识：每点 +10 最大法力（每场战斗回满）",          0, 20],
+    ["mastery",    "魔", "魔法精通 0=初级 1=中级 2=专家（原版按学派分别）",  0, 2],
     ["luck",       "幸", "幸运：+N → N/24 触发幸运一击（+1…+3）",          -3, 3],
-    ["morale",     "士", "士气：+N → N/24，好/坏士气（士气切片才读）",      -3, 3],
-    ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片才读）", 0, 3]
+    ["morale",     "士", "士气：+N → N/24，好/坏士气",                      -3, 3],
+    ["tactics",    "术", "战术等级 0/1/2/3 = 布阵 0/3/5/7 行（战术切片未做）", 0, 3]
   ];
+
+  /* 法力与每回合施法额度。原版这两样都挂在英雄身上，但它们是**战斗内状态**，
+     不属于「局外配置」，所以不塞进 HEROES（HEROES 跨重开保留，法力每战回满）。 */
+  var mana = { us: 0, them: 0 };
+  var castsThisRound = { us: 0, them: 0 };
+
+  // 原版 spell points 上限 = 10 × 知识（heroes.thelazy.net Knowledge：每点 +10 法力上限）
+  function manaMax(side) { return 10 * (heroOf(side).knowledge || 0); }
+  function manaOf(side) { return mana[side] || 0; }
+  // 精通：0 初级 / 1 中级 / 2 专家（原版按学派，原型一个全局值）
+  function masteryOf(side) { return Math.max(0, Math.min(2, heroOf(side).mastery || 0)); }
 
   function heroOf(side) { return HEROES[side] || {}; }
 
@@ -429,6 +464,8 @@
     for (i = 0; i < HSTATS.length; i++) if (HSTATS[i][0] === stat) spec = HSTATS[i];
     if (spec) n = Math.max(spec[3], Math.min(spec[4], Math.round(n)));
     h[stat] = n;
+    // 知识改了上限：当前法力只压回上限，不主动补满（原版提升知识只抬上限）
+    if (stat === "knowledge" && mana[side] > manaMax(side)) mana[side] = manaMax(side);
     if (units) units.forEach(function(u){ if (u.side === side) applyHeroStats(u); });
     renderHeroBar();
     if (units) render();
@@ -461,7 +498,9 @@
           return '<input type="number" data-side="' + side + '" data-stat="' + f[0] +
             '" min="' + f[3] + '" max="' + f[4] + '" step="1" value="' + v +
             '" class="' + (v ? "on" : "") + '" title="' + f[2] + '">';
-        }).join("") + '</div>';
+        }).join("") + '</div>' +
+        '<div class="mana" data-mana="' + side + '">法力 <b>' + manaOf(side) + '</b>/' +
+          manaMax(side) + (castsThisRound[side] ? ' · 本回合已施法' : '') + '</div>';
     });
     bar.innerHTML = h;
   }
@@ -503,6 +542,31 @@
     box.moved = function(){ return hasMoved; };
     box.setMoved = function(v){ hasMoved = !!v; };   // 仅测试：模拟"这一手已经动过"
     box.selectedUnit = function(){ return selected; };
+    // ── 法术切片（_probe17）──
+    box.SPELLS = SPELLS;
+    box.SPELL_ORDER = SPELL_ORDER;
+    box.castSpell = castSpell;
+    box.canCastNow = canCastNow;
+    box.beginCast = beginCast;
+    box.castModeKey = function(){ return castMode; };
+    box.clearCastMode = function(){ castMode = null; };
+    box.masteryOf = masteryOf;
+    box.manaMax = manaMax;
+    box.manaOf = manaOf;
+    box.setMana = function(side, v){ mana[side] = Math.max(0, Math.min(manaMax(side), Math.round(+v) || 0)); };
+    box.spellDamage = spellDamage;
+    box.spellDuration = spellDuration;
+    box.spellIsMass = spellIsMass;
+    box.spellTargetKind = spellTargetKind;
+    box.spellImmune = spellImmune;
+    box.effectsOf = function(u){ return (u.effects || []).slice(); };
+    box.addEffect = addEffect;
+    box.tickEffects = tickEffects;
+    box.recomputeUnit = recomputeUnit;
+    box.castsThisRound = function(){ return { us: castsThisRound.us, them: castsThisRound.them }; };
+    box.setCastsThisRound = function(side, n){ castsThisRound[side] = n; };
+    box.spellBookHtml = function(){ return document.getElementById("spellBook")._html || ""; };
+    box.startRoundNow = function(){ roundNo++; startRound(); };
   }
 
   /* ══════════════ 怪物图鉴 BESTIARY ══════════════
@@ -536,7 +600,8 @@
                 note: "原型自定：二连击取自升级形态神射手（databank-creatures.php:750）" },
     "狮鹫":   { retaliating: 2, note: "Griffin 每回合 2 次反击（:745-746）" },
     "骑士":   { note: "Cavalier：冲锋在 ROSTER 标 joust" },
-    "绿龙":   { note: "Green Dragon：龙息在 ROSTER 标 breath" },
+    "绿龙":   { magicImmune: true,
+                note: "Green Dragon：龙息在 ROSTER 标 breath。魔法免疫：原版按法术等级免疫（1-2 级），原型只实现 1-2 级法术，故等价于全免疫——标「原型简化」" },
     "魔童":   { },
     "恶魔犬": { attackAround: -1, enemyRetaliating: false, derived: true,
                 note: "原型自定：宽攻+不遭反击取自升级形态三头犬 Cerberus（:773 / :730-731）" },
@@ -554,9 +619,11 @@
                     note: "尸王/尸王领主：重生（:801-803）+ 亡灵" },
     "鹰身女妖王": { attackAndReturn: true, enemyRetaliating: false,
                     note: "attackAndReturn（:762）+ 不遭反击" },
-    "圣龙":       { fear: 10, mindImmune: true, note: "Azure Dragon 词条：10% 冻结一轮" },
+    "圣龙":       { fear: 10, mindImmune: true, magicImmune: true,
+                    note: "Azure Dragon 词条：10% 冻结一轮 + 魔法免疫" },
     "石魔像":     { mindImmune: true, splashImmune: true, note: "魔像：免疫恐惧与死亡之云" },
-    "魔法元素":   { mindImmune: true, splashImmune: true, note: "元素：免疫恐惧与死亡之云" },
+    "魔法元素":   { mindImmune: true, splashImmune: true, magicImmune: true,
+                    note: "元素：免疫恐惧与死亡之云 + 魔法免疫（Magic Elemental）" },
     "石像鬼":     { splashImmune: true, note: "石像鬼：免疫死亡之云溅射" },
     "投石车":     { noMorale: true, mindImmune: true, splashImmune: true,
                     note: "战争机器：不掷士气（creature_morale 钳 0）、免疫心智" }
@@ -579,6 +646,8 @@
     u.fear = t.fear || 0;                       // 预留：恐惧掷骰在士气/恐惧切片
     u.mindImmune = !!t.mindImmune || !!u.undead;
     u.splashImmune = !!t.splashImmune || !!u.undead;
+    u.magicImmune = !!t.magicImmune;             // 完全免疫法术（原版按等级免疫，见「绿龙」note）
+    u.effects = [];                              // 法术效果（buff/debuff），由法术引擎维护
     u.retaliationsLeft = u.retaliating;
     u.retaliated = false;
   }
@@ -595,10 +664,284 @@
     if (u.piercing) out.push("穿刺 " + u.piercing + "%");
     if (u.regenerating) out.push("重生");
     if (u.undead) out.push("亡灵");
+    if (u.magicImmune) out.push("魔法免疫");
     if (u.shootingCloud) out.push("弹射弹");
     if (u.fear) out.push("恐惧 " + u.fear + "%");
     return out;
   }
+
+  /* ══════════════ 法术 SPELLS（代表子集 7 个） ══════════════
+     数值全部来自 heroes.thelazy.net 各法术词条原文（逐条抄在 参考资料.md §2.10）：
+       · 伤害法术：精通只改**基础值**，力量按固定倍率线性叠加
+         Magic Arrow  Basic 10+10×力 / Adv 20+10×力 / Expert 30+10×力
+         Lightning    Basic 10+25×力 / Adv 20+25×力 / Expert 50+25×力
+       · 增益/减益：效果是**固定值**（随精通变、不随力量变），力量只决定持续回合
+         Haste  +3 / +5（专家全体）      Slow   −25% / 减半（专家全体）
+         Bless  取最大伤害 / 最大+1       Curse  取最小−1（每只不低于 1）
+       · 持续回合 = 力量（词条写作 "1 rnd/[sp]"），最少 1 回合
+
+     这是原版最反直觉的一点：**力量不放大 Haste/Bless 的数值，只延长它们**。
+     施法代价：法力（spell points）、每回合一次（S1 `H3.Rules.RPC.js:1425`
+     `combatCasts` → "Already cast"）。 */
+  var SPELLS = {
+    magicArrow:   { name: "魔法箭", school: "all",   level: 1, cost: 5,  target: "enemy",
+                    instant: true, base: [10, 20, 30], perPower: 10,
+                    desc: "基础+10×力" },
+    bless:        { name: "祝福",   school: "water", level: 1, cost: 5,  target: "ally",
+                    buff: true, mass: true, desc: "伤害取最大值（中级起 +1）" },
+    curse:        { name: "诅咒",   school: "fire",  level: 1, cost: 6,  target: "enemy",
+                    debuff: true, mass: true, desc: "伤害取最小值−1" },
+    haste:        { name: "加速",   school: "air",   level: 1, cost: 6,  target: "ally",
+                    buff: true, mass: true, desc: "速度 +3（中级起 +5）" },
+    slow:         { name: "减速",   school: "earth", level: 1, cost: 6,  target: "enemy",
+                    debuff: true, mass: true, desc: "速度 −25%（中级起减半）" },
+    dispel:       { name: "驱散",   school: "water", level: 1, cost: 5,  target: "any",
+                    instant: true, mass: true, desc: "移除目标所有法术效果" },
+    lightningBolt:{ name: "闪电",   school: "air",   level: 2, cost: 10, target: "enemy",
+                    instant: true, base: [10, 20, 50], perPower: 25,
+                    desc: "基础+25×力" }
+  };
+  var SPELL_ORDER = ["magicArrow", "bless", "curse", "haste", "slow", "dispel", "lightningBolt"];
+
+  // 互为反制（词条明写）：施放一个会把另一个从目标身上移除
+  var SPELL_COUNTER = { haste: "slow", slow: "haste", bless: "curse", curse: "bless" };
+
+  function spellDuration(side) { return Math.max(1, heroOf(side).spellpower || 0); }
+
+  // 伤害法术的实际伤害：精通只改基础值，力量线性叠加（不是乘）
+  function spellDamage(key, side) {
+    var s = SPELLS[key];
+    if (!s || !s.base) return 0;
+    return s.base[masteryOf(side)] + s.perPower * (heroOf(side).spellpower || 0);
+  }
+
+  // 专家级会把单体增益/减益变成全体（词条 Expert Effect）
+  function spellIsMass(key, side) {
+    var s = SPELLS[key];
+    return !!(s && s.mass && masteryOf(side) === 2);
+  }
+
+  // 驱散的 Basic 只能选友方，Advanced 起敌我皆可（词条原文）
+  function spellTargetKind(key, side) {
+    if (key === "dispel" && masteryOf(side) === 0) return "ally";
+    return SPELLS[key] ? SPELLS[key].target : null;
+  }
+
+  function spellImmune(u, key) {
+    if (!u || u.dead) return true;
+    if (u.magicImmune) return true;                                      // 完全免疫
+    if (u.undead && (key === "bless" || key === "curse")) return true;   // 心智类：亡灵免疫
+    return false;
+  }
+
+  /* 效果叠加到单位：speed 用加法/百分比，伤害用"压成固定值"。
+     互斥（counter）先移除，再移除同名旧效果 → 重放 = 刷新持续时间。 */
+  function makeEffect(key, side) {
+    var m = masteryOf(side), d = spellDuration(side);
+    if (key === "haste") return { spell: key, name: "加速", kind: "buff",   remaining: d, add: [3, 5, 5][m] };
+    if (key === "slow")  return { spell: key, name: "减速", kind: "debuff", remaining: d, mult: [0.75, 0.5, 0.5][m] };
+    if (key === "bless") return { spell: key, name: "祝福", kind: "buff",   remaining: d, dmgFix: "max", plus: m >= 1 ? 1 : 0 };
+    if (key === "curse") return { spell: key, name: "诅咒", kind: "debuff", remaining: d, dmgFix: "min", minus: m >= 1 ? 1 : 0 };
+    return null;
+  }
+
+  /* 单位数值 = 裸值 + 效果。所有会改数值的东西都必须走这里，
+     不许直接在效果回调里改 u.speed / u.dmg（那会漏还原）。 */
+  function recomputeUnit(u) {
+    if (!u.baseDmg) return;
+    u.speed = u.baseSpeed;
+    u.dmg = u.baseDmg.slice();
+    (u.effects || []).forEach(function(e){
+      if (e.add) u.speed += e.add;
+      if (e.mult) u.speed = Math.max(1, Math.floor(u.speed * e.mult));   // 原版：新的速度向下取整
+      if (e.dmgFix === "max") { u.dmg[0] = u.baseDmg[1] + (e.plus || 0); u.dmg[1] = u.dmg[0]; }
+      if (e.dmgFix === "min") {
+        var v = Math.max(1, u.baseDmg[0] - (e.minus || 0));              // 每只不低于 1
+        u.dmg[0] = v; u.dmg[1] = v;
+      }
+    });
+  }
+
+  function removeEffect(u, spellKey) {
+    if (!u.effects || !u.effects.length) return false;
+    var n = u.effects.length;
+    u.effects = u.effects.filter(function(e){ return e.spell !== spellKey; });
+    if (u.effects.length !== n) { recomputeUnit(u); return true; }
+    return false;
+  }
+
+  function addEffect(u, eff) {
+    if (!eff) return;
+    var c = SPELL_COUNTER[eff.spell];
+    if (c) removeEffect(u, c);          // 反制：Haste↔Slow、Bless↔Curse
+    removeEffect(u, eff.spell);         // 重放 = 刷新，不叠层
+    u.effects.push(eff);
+    recomputeUnit(u);
+  }
+
+  // 每轮开始递减；返回本轮到期的效果（日志用）
+  function tickEffects(u) {
+    if (!u.effects || !u.effects.length) return [];
+    var gone = [];
+    u.effects = u.effects.filter(function(e){
+      e.remaining -= 1;
+      if (e.remaining <= 0) { gone.push(e); return false; }
+      return true;
+    });
+    if (gone.length) { recomputeUnit(u); return gone; }
+    return [];
+  }
+
+  // 施法时机：轮到我方（且不是自动/快速战斗——那两种模式玩家不操作）
+  function canCastNow(side) {
+    var act = current();
+    return !!(act && !act.dead && !over && act.side === side && !quickMode && !autoMode);
+  }
+
+  /* 施法入口。纯逻辑，UI 与探针都走这里。
+     返回 { ok, why, affected, immune, damage, effect } —— 失败一律给 why。 */
+  function castSpell(side, key, target) {
+    var s = SPELLS[key];
+    if (!s) return { ok: false, why: "未知法术" };
+    if (over) return { ok: false, why: "战斗已结束" };
+    if (!canCastNow(side)) return { ok: false, why: "现在不能施法（只在我方行动时）" };
+    if (castsThisRound[side]) return { ok: false, why: "本回合已施法" };
+    if (manaOf(side) < s.cost) return { ok: false, why: "法力不足（需 " + s.cost + "）" };
+
+    var mass = spellIsMass(key, side), targets;
+    if (mass) {
+      var pool = units.filter(function(u){ return !u.dead; });
+      if (key === "dispel") targets = pool;                                  // 专家：全场所有单位
+      else if (s.target === "ally") targets = pool.filter(function(u){ return u.side === side; });
+      else targets = pool.filter(function(u){ return u.side !== side; });
+    } else {
+      if (!target || target.dead) return { ok: false, why: "目标无效" };
+      var kind = spellTargetKind(key, side);
+      if (kind === "enemy" && target.side === side) return { ok: false, why: "只能对敌方施放" };
+      if (kind === "ally" && target.side !== side) return { ok: false, why: "只能对友方施放" };
+      targets = [target];
+    }
+
+    var affected = [], immune = [];
+    targets.forEach(function(u){ (spellImmune(u, key) ? immune : affected).push(u); });
+    if (!mass && !affected.length) return { ok: false, why: target.name + " 免疫此法术" };
+    if (mass && !affected.length) return { ok: false, why: "没有可作用的单位" };
+
+    // 到这里才扣费：非法目标 / 免疫都不该白吃一次施法
+    mana[side] -= s.cost;
+    castsThisRound[side] += 1;
+
+    var res = { ok: true, affected: affected, immune: immune };
+
+    if (s.base) {                                  // 直接伤害
+      var dmg = spellDamage(key, side);
+      res.damage = dmg;
+      affected.forEach(function(u){
+        var before = u.count;
+        applyDamage(u, dmg);
+        log("<b>" + s.name + "</b> 命中 <b>" + u.name + "</b> · 造成 " + dmg + " 伤害，击杀 " +
+            (before - u.count) + "（剩 " + u.count + "）", side);
+        floatText(u.x, u.y, "-" + dmg, u.side === "us" ? "them" : "us", dmg >= u.maxHp * 0.2);
+        animateHit(u);
+        if (u.dead) {
+          log("<b>" + u.name + "</b> 被法术消灭", "sys");
+          setTimeout(function(){ removeUnitEl(u); }, 260);
+        }
+      });
+      checkEnd();
+    } else if (key === "dispel") {                 // 驱散
+      res.removed = [];
+      affected.forEach(function(u){
+        var n = (u.effects || []).length;
+        u.effects = [];
+        recomputeUnit(u);
+        if (n) res.removed.push({ id: u.id, n: n });
+        log("<b>驱散</b> " + u.name + " · 移除 " + n + " 个法术效果", side);
+      });
+    } else {                                       // 增益 / 减益
+      affected.forEach(function(u){
+        var eff = makeEffect(key, side);
+        addEffect(u, eff);
+        log("<b>" + s.name + "</b> 生效于 <b>" + u.name + "</b> · " + eff.name +
+            "（" + eff.remaining + " 回合）", side);
+        floatText(u.x, u.y, eff.name, u.side === "us" ? "us" : "them", false);
+      });
+      res.effect = affected.length ? affected[0].effects[affected[0].effects.length - 1] : null;
+    }
+
+    renderHeroBar();
+    render();
+    return res;
+  }
+
+  /* ── 法术书 UI ────────────────────────────────────────── */
+  var castMode = null;      // 非空 = 正在为这个法术选目标
+
+  function renderSpellBook() {
+    var box = document.getElementById("spellBook");
+    if (!box) return;
+    var act = current();
+    var side = (act && act.side) || "us";
+    var canCast = canCastNow(side) && !castsThisRound[side];
+    var h = '<div class="hd"><span>法术书 · ' + (side === "us" ? "我方" : "敌方") +
+            '</span><b>' + manaOf(side) + '/' + manaMax(side) + ' 法力</b></div><div class="grid">';
+    SPELL_ORDER.forEach(function(k){
+      var s = SPELLS[k];
+      var ready = canCast && manaOf(side) >= s.cost;
+      h += '<button data-spell="' + k + '" class="' + (ready ? "ready" : "") + '"' +
+        (ready ? "" : " disabled") + ' title="' + s.desc + '">' +
+        '<span class="nm">' + s.name + '<span class="cost">' + s.cost + '</span></span>' +
+        '<span class="ds">' + s.level + ' 级 · ' + s.desc + '</span></button>';
+    });
+    h += '</div><div class="tip">' +
+      (castMode ? "选择目标：点单位施放，点空地取消"
+        : !canCastNow(side) ? "只在我方单位行动时可施法"
+        : castsThisRound[side] ? "本回合已施法（每回合一次）"
+        : "点法术再点目标 · 施法不消耗该单位的行动") +
+      '</div>';
+    box.innerHTML = h;
+  }
+
+  function beginCast(key) {
+    if (!SPELLS[key]) return false;
+    var act = current(), side = act ? act.side : null;
+    if (!side || !canCastNow(side)) { setHint("只在我方单位行动时才能施法"); return false; }
+    if (castsThisRound[side]) { setHint("本回合已经施过法了（每回合一次）"); return false; }
+    if (manaOf(side) < SPELLS[key].cost) { setHint("法力不足：需要 " + SPELLS[key].cost + " 点"); return false; }
+    if (spellIsMass(key, side)) {                 // 专家全体：不用选目标
+      var r = castSpell(side, key, null);
+      if (r.ok) castMode = null;
+      return r.ok;
+    }
+    castMode = key;
+    setHint(SPELLS[key].name + "：" +
+      (spellTargetKind(key, side) === "ally" ? "点一个友方单位" : "点一个敌方单位") + "（点空地取消）");
+    render();
+    return true;
+  }
+
+  function handleSpellClick(x, y) {
+    var act = current(), side = act ? act.side : null;
+    var u = unitAt(x, y);
+    if (!u) { castMode = null; setHint("已取消施法"); render(); return null; }
+    var res = castSpell(side, castMode, u);
+    if (!res.ok) { setHint(res.why); render(); return res; }
+    castMode = null;
+    render();
+    return res;
+  }
+
+  // 委托一次；innerHTML 重建不影响
+  (function bindSpellBook(){
+    var box = document.getElementById("spellBook");
+    if (!box || !box.addEventListener) return;
+    box.addEventListener("click", function(e){
+      var t = e.target;
+      while (t && t !== box && !(t.dataset && t.dataset.spell)) t = t.parentNode;
+      if (!t || t === box) return;
+      beginCast(t.dataset.spell);
+    });
+  })();
 
   var units, order, roundNo, selected, hasMoved, moveMap, atkSet, over;
   var hoverUnit = null, pendingAttack = null, lastPT = "mouse";
@@ -870,6 +1213,10 @@
       u.maxHp = t.count * t.perHp;
       u.hp = u.maxHp;
       u.startCount = t.count;   // 战报用：开局编制
+      // 法术会改 u.speed / u.dmg，所以裸值必须单独留一份，且**不能**指向 ROSTER 的数组
+      u.baseSpeed = t.speed;
+      u.baseDmg = t.dmg.slice();
+      u.dmg = t.dmg.slice();
       u.dead = false;
       u.defending = false;
       // 特性一律查图鉴（怪物那边的唯一入口）；ROSTER 有 kind 就用 kind，没有就用 name
@@ -888,6 +1235,12 @@
   }
 
   function startRound() {
+    /* 法术效果按**轮**递减（原型自定：原版按施法者回合结算，这里压成轮粒度）。
+       必须先递减再排顺序——加速到期的那一队，本轮就该按新速度排队。 */
+    var expired = [];
+    units.forEach(function(u){
+      tickEffects(u).forEach(function(e){ expired.push({ u: u, e: e }); });
+    });
     order = alive().slice().sort(function(a, b){
       if (b.speed !== a.speed) return b.speed - a.speed;
       return a.side === "us" ? -1 : 1;
@@ -898,6 +1251,8 @@
       u.defending = false;
     });
     log("—— 第 " + roundNo + " 回合 ——", "sys");
+    expired.forEach(function(x){ log("<b>" + x.u.name + "</b> 的 " + x.e.name + " 失效", "sys"); });
+    castsThisRound.us = 0; castsThisRound.them = 0;   // 每回合一次施法额度
     nextActor();
   }
 
@@ -1717,6 +2072,9 @@
     if (autoMode && !over) { takeover(); return; }
     if (!act || over || busy || quickMode) return;
 
+    // 施法中：点单位 = 施放，点空地 = 取消。施法不消耗行动，所以要在 hasMoved 判定之前。
+    if (castMode) { handleSpellClick(x, y); return; }
+
     // H3 的节奏：一个单位一次动作。点空地走完就交棒，点敌人打完也交棒，
     // 不存在"走完再补一刀"这种原版没有的第二动作。
     // 所以动作一旦用掉，这里不再接受任何点击（含"点敌人反悔"）。
@@ -1987,6 +2345,7 @@
     if (over) return;
     if (!winner) winner = alive("us").length ? "us" : "them";
     over = winner;
+    castMode = null;                    // 收场时退出施法瞄准，免得点击落到战场上去
     var box = document.getElementById("field");
     var d = document.createElement("div");
     d.className = "over";
@@ -2680,6 +3039,7 @@
       card.style.display = "none";
     }
 
+    renderSpellBook();
     renderQueue();
 
     var myTurn = !!act && act.side === "us" && !over && !quickMode && !autoMode;
@@ -2822,6 +3182,11 @@
     settling = false;
     units = makeUnits();
     faceAll();                          // 开局站位：双格单位的头一律朝敌人
+    // 法力每场回满（原型自定：没有冒险地图，无法带"上路时的剩余法力"进战斗）
+    mana.us = manaMax("us");
+    mana.them = manaMax("them");
+    castsThisRound.us = 0; castsThisRound.them = 0;
+    castMode = null;
     roundNo = 1;
     order = [];
     selected = null;

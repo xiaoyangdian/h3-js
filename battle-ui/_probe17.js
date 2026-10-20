@@ -371,7 +371,8 @@ ok('法术书显示了法力 30/30', hb.indexOf('30/30') >= 0, hb.slice(0, 90));
 ok('英雄面板里也有法力行', T.heroBarHtml().indexOf('法力') >= 0);
 
 ok('点单体法术进入选目标模式', T.beginCast('haste') === true && T.castModeKey() === 'haste', T.castModeKey());
-ok('选目标时提示点单位', /点一个友方单位/.test(T.hint()), T.hint());
+ok('选目标时提示点单位（并给出 Esc 取消）',
+   /点一个友方部队/.test(T.hint()) && /Esc 取消/.test(T.hint()), T.hint());
 T.clearCastMode();
 ok('可以取消施法模式', T.castModeKey() === null);
 

@@ -175,6 +175,28 @@
   .spellbook button:disabled{opacity:.45}
   .spellbook .tip{font-size:10.5px;color:var(--ink3);margin-top:6px;line-height:1.5}
 
+  /* ── 法术书弹窗：按钮开出，浮在战棋区域上（不动右侧面板的布局） ── */
+  .fieldwrap{position:relative}
+  .spellpanel{position:absolute;inset:0;display:none;z-index:30;
+    align-items:center;justify-content:center}
+  .spellpanel.open{display:flex}
+  .spellpanel .scrim{position:absolute;inset:0;background:rgba(28,32,24,.32);border-radius:14px}
+  .spellpanel .book{position:relative;width:min(352px,94%);max-height:calc(100% - 12px);overflow:auto;
+    background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:6px 8px 8px;
+    box-shadow:0 18px 48px rgba(20,24,16,.34)}
+  .spellpanel .bookhd{display:flex;justify-content:flex-end;margin-bottom:2px}
+  .spellpanel .book .spellbook{margin:0;padding:0;border:0;background:transparent}
+  .spellpanel .x{flex:0 0 auto;width:auto;padding:2px 8px;font-size:11px;line-height:1.5;
+    border-radius:7px;background:transparent;border-color:transparent;color:var(--ink3)}
+  .spellpanel .x:hover:not(:disabled){background:#e9ebdf;border-color:transparent;color:var(--ink)}
+
+  #btnSpell.ready{border-color:#9db8d6;background:#eef4fb}
+  #btnSpell.casting{border-color:#8a7fc0;background:#efeafb;color:#4b3d80}
+
+  /* 瞄准态：可取目标描紫虚线圈，免疫/不合法目标描灰 */
+  .hex.spell-ok{fill:#e4e0f6;stroke:#8878bd;stroke-width:1.6;stroke-dasharray:6 3}
+  .hex.spell-no{fill:#dcdcd2;stroke:#adada0;stroke-width:1;stroke-dasharray:2 3;opacity:.8}
+
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:12px;font-weight:500;color:var(--ink3)}
   .who{display:flex;align-items:center;gap:9px;margin-bottom:8px}
@@ -217,6 +239,7 @@
   <div class="topbar">
     <div class="round">回合 <b id="roundNo">1</b></div>
     <div class="queue" id="queue"></div>
+    <button id="btnSpell" style="flex:0 0 auto" title="法术书：点开选法术，再点目标施放（Esc 取消）">魔法书</button>
     <button id="btnAuto" style="flex:0 0 auto" title="自动战斗 / 接管（原版 Auto Combat：A 键切换）">自动战斗</button>
     <button id="quick" style="flex:0 0 auto" title="原版 Quick Combat：不进战斗画面直接结算">快速战斗</button>
     <button id="restart" style="flex:0 0 auto">重开</button>
@@ -224,8 +247,18 @@
 
   <div class="stage">
     <div>
-      <div class="field" id="field">
-        <svg id="bf"></svg>
+      <div class="fieldwrap">
+        <div class="field" id="field">
+          <svg id="bf"></svg>
+        </div>
+        <!-- 法术书弹窗：浮在战棋区域上方，点「魔法书」开，选完法术自动收起来看目标 -->
+        <div class="spellpanel" id="spellPanel" aria-hidden="true">
+          <div class="scrim" id="spellScrim"></div>
+          <div class="book">
+            <div class="bookhd"><button class="x" id="spellClose" title="关闭（Esc）">关闭</button></div>
+            <div class="spellbook" id="spellBook"></div>
+          </div>
+        </div>
       </div>
       <div class="confirmbar" id="confirmBar">
         <div class="txt" id="confirmText"></div>
@@ -237,7 +270,7 @@
 
     <aside>
       <div class="heroes" id="heroBar"></div>
-      <div class="spellbook" id="spellBook"></div>
+      <!-- 法术书已改为弹窗（顶栏「魔法书」），侧栏不再常驻 -->
       <div class="card" id="curCard" style="display:none"></div>
       <div class="btns">
         <button id="btnDefend">防御</button>
@@ -677,6 +710,41 @@
     box.castsThisRound = function(){ return { us: castsThisRound.us, them: castsThisRound.them }; };
     box.setCastsThisRound = function(side, n){ castsThisRound[side] = n; };
     box.spellBookHtml = function(){ return document.getElementById("spellBook")._html || ""; };
+    // ── 法术书弹窗与施法交互（_probe20）──
+    box.openSpellBook = openSpellBook;
+    box.closeSpellBook = closeSpellBook;
+    box.toggleSpellBook = toggleSpellBook;
+    box.spellBookOpen = function(){ return spellOpen; };
+    box.spellBtn = function(){
+      var b = document.getElementById("btnSpell");
+      return { text: b.textContent, disabled: b.disabled,
+               ready: !!(b.classList && b.classList.contains && b.classList.contains("ready")),
+               casting: !!(b.classList && b.classList.contains && b.classList.contains("casting")) };
+    };
+    box.panelOpen = function(){
+      var p = document.getElementById("spellPanel");
+      return !!(p && p.classList && p.classList.contains && p.classList.contains("open"));
+    };
+    box.legalTargets = legalTargets;
+    box.spellForecast = spellForecast;
+    box.handleSpellClick = handleSpellClick;
+    box.castFromUI = castFromUI;
+    box.cancelCast = cancelCast;
+    box.hoverPreview = hoverPreview;      // 悬停预览（瞄准态用来挑目标）
+    box.startAuto = startAuto;
+    box.castableNow = castableNow;
+    box.readySpellCount = readySpellCount;
+    box.spellPreviewHtml = function(){
+      // 瞄准态画了哪些格子/文字：数预览图层里各类元素的个数（探针不解析 SVG）
+      var cls = { ok: 0, no: 0, text: 0 };
+      (gPrev.children || []).forEach(function(c){
+        var k = c.getAttribute && c.getAttribute("class");
+        if (k === "hex spell-ok") cls.ok++;
+        else if (k === "hex spell-no") cls.no++;
+        if (c.tagName === "text") cls.text++;
+      });
+      return cls;
+    };
     box.startRoundNow = function(){ roundNo++; startRound(); };
   }
 
@@ -1010,8 +1078,28 @@
     return res;
   }
 
-  /* ── 法术书 UI ────────────────────────────────────────── */
+  /* ── 法术书 UI ──────────────────────────────────────────────
+     流程：点「魔法书」→ 弹窗浮在战棋区域上 → 点一个法术 → 弹窗自动收起、
+     棋盘进瞄准态（合法目标描圈）→ 点目标施放；点空地 / Esc / 右键 / 再点按钮 = 取消。
+     施法不消耗该单位这一手，所以施法前后 current() 不变。 */
   var castMode = null;      // 非空 = 正在为这个法术选目标
+  var spellOpen = false;    // 弹窗开着
+
+  // 现在能施法吗（时机 + 每回合一次）：法术书按钮与按钮置灰共用这一个口径
+  function castableNow(side) { return canCastNow(side) && !castsThisRound[side]; }
+
+  /* 这本法术能打谁：ok = 合法目标，no = 阵营对但免疫（也要描出来，别让人白点）。
+     阵营不对的压根不列——这批圈只用来表示"可点"。 */
+  function legalTargets(key, side) {
+    var kind = spellTargetKind(key, side), ok = [], no = [];
+    (units || []).forEach(function(u){
+      if (u.dead) return;
+      if (kind === "enemy" && u.side === side) return;
+      if (kind === "ally" && u.side !== side) return;
+      (spellImmune(u, key) ? no : ok).push(u);
+    });
+    return { ok: ok, no: no, kind: kind };
+  }
 
   function renderSpellBook() {
     var box = document.getElementById("spellBook");
@@ -1019,7 +1107,7 @@
     /* 法术书永远是**玩家自己（我方）**的：敌方部队行动中，整本禁用。
        原版 AI 会自己施法，但那属于 AI 回合，不能由玩家代按。 */
     var side = "us";
-    var canCast = canCastNow(side) && !castsThisRound[side];
+    var canCast = castableNow(side);
     var h = '<div class="hd"><span>法术书 · ' + (side === "us" ? "我方" : "敌方") +
             '</span><b>' + manaOf(side) + '/' + manaMax(side) + ' 法力</b></div><div class="grid">';
     SPELL_ORDER.forEach(function(k){
@@ -1031,12 +1119,135 @@
         '<span class="ds">' + s.level + ' 级 · ' + s.desc + '</span></button>';
     });
     h += '</div><div class="tip">' +
-      (castMode ? "选择目标：点单位施放，点空地取消"
+      (castMode ? "选目标：点描圈的部队施放，点空地取消"
         : !canCastNow(side) ? "只在我方单位行动时可施法"
         : castsThisRound[side] ? "本回合已施法（每回合一次）"
-        : "点法术再点目标 · 施法不消耗该单位的行动") +
+        : readySpellCount(side) === 0 ? "法力不足：先在右侧英雄面板设「知识」（每点 +10 法力）"
+        : "点法术 → 弹窗收起 → 点目标 · 施法不消耗该单位的行动") +
       '</div>';
     box.innerHTML = h;
+  }
+
+  function syncSpellPanel() {
+    var p = document.getElementById("spellPanel");
+    if (!p) return;
+    if (p.classList && p.classList.toggle) p.classList.toggle("open", !!spellOpen);
+    if (p.setAttribute) p.setAttribute("aria-hidden", spellOpen ? "false" : "true");
+  }
+
+  function readySpellCount(side) {
+    if (!castableNow(side)) return 0;
+    return SPELL_ORDER.filter(function(k){ return manaOf(side) >= SPELLS[k].cost; }).length;
+  }
+
+  // 按钮本身也报状态：能施法时描蓝边，瞄准中变成「取消施法」
+  function syncSpellBtn() {
+    var b = document.getElementById("btnSpell");
+    if (!b) return;
+    var blocked = !!over || quickMode || autoMode;
+    b.disabled = blocked;
+    if (b.classList) {
+      b.classList.toggle("ready", !blocked && !castMode && readySpellCount("us") > 0);
+      b.classList.toggle("casting", !!castMode);
+    }
+    b.textContent = castMode ? "取消施法" : "魔法书";
+  }
+
+  function openSpellBook() {
+    if (over || quickMode || autoMode) return false;
+    spellOpen = true;
+    renderSpellBook();
+    syncSpellPanel();
+    syncSpellBtn();
+    return true;
+  }
+
+  function closeSpellBook() {
+    if (!spellOpen) return false;
+    spellOpen = false;
+    syncSpellPanel();
+    syncSpellBtn();
+    return true;
+  }
+
+  function toggleSpellBook() { return spellOpen ? closeSpellBook() : openSpellBook(); }
+
+  // 退出瞄准（Esc / 右键 / 点空地 / 再点一次按钮）
+  function cancelCast(why) {
+    if (!castMode) return false;
+    castMode = null;
+    hoverUnit = null;
+    setHint(why || "已取消施法");
+    render();
+    return true;
+  }
+
+  /* 瞄准时的结果预测：伤害法术给"掉多少血 / 剩几只"，增益给"效果 + 剩余回合"。
+     和 castSpell 用同一套数值函数，不另算一份口径。 */
+  function spellForecast(u, key, side) {
+    var s = SPELLS[key];
+    if (!s || !u) return null;
+    if (s.base) {
+      var d = spellDamage(key, side);
+      var left = Math.ceil(Math.max(0, u.hp - d) / u.perHp);
+      return { main: "−" + d, sub: left > 0 ? "剩 " + left + " 只" : "全灭" };
+    }
+    if (key === "dispel") {
+      var n = (u.effects || []).length;
+      return { main: n ? "驱散 " + n + " 个" : "无效果可驱", sub: "" };
+    }
+    var eff = makeEffect(key, side);
+    return eff ? { main: eff.name, sub: eff.remaining + " 回合" } : { main: s.name, sub: "" };
+  }
+
+  // 施法特效：法阵扩散 + 中心辉光，颜色按学派；伤害法术再震一下屏
+  var SPELL_TINT = { fire: "#c9603a", water: "#3f7fa8", air: "#6d86c4", earth: "#7d7f42", all: "#8a6fb8" };
+  function spellFx(list, key) {
+    var s = SPELLS[key] || {};
+    var col = SPELL_TINT[s.school] || "#8a6fb8";
+    if (!FX_ON || !list || !list.length) return col;
+    list.forEach(function(u){
+      var c = center(u.x, u.y), g = fxLayer();
+      g.setAttribute("transform", "translate(" + c.cx + "," + c.cy + ")");
+      var core = fxEl("circle", { r: "10", fill: col, opacity: ".34" });
+      var r1 = fxEl("circle", { r: "10", fill: "none", stroke: col, "stroke-width": "3" });
+      var r2 = fxEl("circle", { r: "5", fill: "none", stroke: "#ffffff", "stroke-width": "1.6", opacity: ".95" });
+      g.appendChild(core); g.appendChild(r1); g.appendChild(r2);
+      tween(440, function(k){
+        r1.setAttribute("r", (10 + 21 * k).toFixed(1));
+        r1.setAttribute("opacity", (1 - k).toFixed(2));
+        r2.setAttribute("r", (5 + 27 * k).toFixed(1));
+        r2.setAttribute("opacity", ((1 - k) * .95).toFixed(2));
+        core.setAttribute("opacity", ((1 - k) * .34).toFixed(2));
+      });
+      fxDrop(g, 480);
+    });
+    if (s.base) fxShake();
+    return col;
+  }
+
+  function castSummary(res, key) {
+    var s = SPELLS[key];
+    var names = res.affected.map(function(u){ return u.name; }).join("、");
+    if (res.damage) return s.name + " 造成 " + res.damage + " 点伤害 · " + names;
+    if (res.removed) {
+      var n = res.removed.reduce(function(a, r){ return a + r.n; }, 0);
+      return s.name + " 移除了 " + n + " 个法术效果 · " + names;
+    }
+    return s.name + " 生效于 " + names + " · 剩余法力 " + manaOf("us");
+  }
+
+  /* UI 施法：判定全交给 castSpell，这里只做收尾（关窗、特效、提示、重画）。
+     施法失败（免疫/目标非法）不扣法力、不退出瞄准。 */
+  function castFromUI(key, target) {
+    var res = castSpell("us", key, target);
+    if (!res.ok) { setHint(res.why); return res; }
+    castMode = null;
+    closeSpellBook();
+    spellFx(res.affected, key);
+    setHint(castSummary(res, key));
+    render();                     // 法力、按钮、队列都可能变了
+    return res;
   }
 
   function beginCast(key) {
@@ -1045,39 +1256,147 @@
     if (!canCastNow(side)) { setHint("只在我方单位行动时才能施法"); return false; }
     if (castsThisRound[side]) { setHint("本回合已经施过法了（每回合一次）"); return false; }
     if (manaOf(side) < SPELLS[key].cost) { setHint("法力不足：需要 " + SPELLS[key].cost + " 点"); return false; }
+    if (castMode === key) { cancelCast(); return false; }   // 再点同一个 = 取消
     if (spellIsMass(key, side)) {                 // 专家全体：不用选目标
-      var r = castSpell(side, key, null);
-      if (r.ok) castMode = null;
+      var r = castFromUI(key, null);
       return r.ok;
     }
     castMode = key;
-    setHint(SPELLS[key].name + "：" +
-      (spellTargetKind(key, side) === "ally" ? "点一个友方单位" : "点一个敌方单位") + "（点空地取消）");
+    hoverUnit = null;
+    closeSpellBook();                             // 收起弹窗，露出棋盘去点目标
+    var kind = spellTargetKind(key, side);
+    setHint(SPELLS[key].name + " · " + SPELLS[key].cost + " 法力 · 点一个" +
+      (kind === "ally" ? "友方部队" : kind === "enemy" ? "敌方部队" : "部队") +
+      "施放（点空地 / Esc 取消）");
     render();
     return true;
   }
 
-  function handleSpellClick(x, y) {
-    var side = "us";                    // 同上：只认我方英雄
-    var u = unitAt(x, y);
-    if (!u) { castMode = null; setHint("已取消施法"); render(); return null; }
-    var res = castSpell(side, castMode, u);
-    if (!res.ok) { setHint(res.why); render(); return res; }
-    castMode = null;
-    render();
-    return res;
+  // 瞄准中把鼠标指向的单位翻译成一句人话（含免疫与阵营错误的解释）
+  function spellHoverHint(u) {
+    if (!castMode) return;
+    var key = castMode, side = "us";
+    var legal = legalTargets(key, side);
+    if (!u || u.dead) {
+      setHint(SPELLS[key].name + " · 点一个" +
+        (legal.kind === "ally" ? "友方" : legal.kind === "enemy" ? "敌方" : "") +
+        "部队施放（点空地 / Esc 取消）");
+      return;
+    }
+    if (legal.no.indexOf(u) >= 0) {
+      setHint(u.name + " 免疫 " + SPELLS[key].name + " · 换一个目标或 Esc 取消");
+      return;
+    }
+    if (legal.ok.indexOf(u) < 0) {
+      setHint(SPELLS[key].name + " 只能对" + (legal.kind === "ally" ? "友方" : "敌方") +
+        "部队施放 · 当前指向 " + u.name);
+      return;
+    }
+    var f = spellForecast(u, key, side);
+    setHint(SPELLS[key].name + " → " + u.name + (u.count > 1 ? " × " + u.count : "") +
+      (f ? " · " + f.main + (f.sub ? " · " + f.sub : "") : "") +
+      " · 点击施放（Esc 取消）");
   }
 
-  // 委托一次；innerHTML 重建不影响
-  (function bindSpellBook(){
-    var box = document.getElementById("spellBook");
-    if (!box || !box.addEventListener) return;
-    box.addEventListener("click", function(e){
-      var t = e.target;
-      while (t && t !== box && !(t.dataset && t.dataset.spell)) t = t.parentNode;
-      if (!t || t === box) return;
-      beginCast(t.dataset.spell);
+  function handleSpellClick(x, y) {
+    var side = "us";                    // 同上：只认我方英雄
+    var key = castMode;
+    if (!key) return null;
+    var u = unitAt(x, y);
+    if (!u) { cancelCast("已取消施法"); return null; }
+    var legal = legalTargets(key, side);
+    if (legal.ok.indexOf(u) < 0) {      // 免疫 / 阵营不对：留在瞄准态，别白丢一次施法
+      var why = legal.no.indexOf(u) >= 0 ? (u.name + " 免疫 " + SPELLS[key].name)
+        : (SPELLS[key].name + " 只能对" + (legal.kind === "ally" ? "友方" : "敌方") + "部队施放");
+      setHint(why + " · 换一个目标或 Esc 取消");
+      return { ok: false, why: why };
+    }
+    return castFromUI(key, u);
+  }
+
+  /* 瞄准态的画面：全场压暗 → 合法目标套紫虚线圈、免疫目标描灰，
+     悬停目标再加一圈实线和结果预测（掉多少血 / 剩几只）。 */
+  function renderSpellPreview() {
+    var key = castMode;
+    if (!key) return;
+    var side = "us";
+    var legal = legalTargets(key, side);
+    gPrev.appendChild(fieldShield());
+    legal.no.forEach(function(u){
+      cellsOf(u).forEach(function(c){ markHex(c[0], c[1], "spell-no"); });
     });
+    legal.ok.forEach(function(u){
+      cellsOf(u).forEach(function(c){ markHex(c[0], c[1], "spell-ok"); });
+    });
+    var hv = hoverUnit;
+    if (!hv || hv.dead || legal.ok.indexOf(hv) < 0) return;
+    var c0 = center(hv.x, hv.y);
+    var ring = document.createElementNS(SVGNS, "circle");
+    ring.setAttribute("cx", c0.cx); ring.setAttribute("cy", c0.cy);
+    ring.setAttribute("r", isWide(hv) ? "27" : "20");
+    ring.setAttribute("fill", "none");
+    ring.setAttribute("stroke", "#5b4b96");
+    ring.setAttribute("stroke-width", "2");
+    ring.setAttribute("stroke-dasharray", "4 3");
+    ring.setAttribute("pointer-events", "none");
+    gPrev.appendChild(ring);
+    var f = spellForecast(hv, key, side);
+    if (!f) return;
+    var t = document.createElementNS(SVGNS, "text");
+    t.setAttribute("x", c0.cx);
+    t.setAttribute("y", c0.cy - 26);
+    t.setAttribute("text-anchor", "middle");
+    t.setAttribute("font-size", "12");
+    t.setAttribute("font-weight", "600");
+    t.setAttribute("fill", "#4b3d80");
+    t.setAttribute("font-family", "system-ui,sans-serif");
+    t.setAttribute("pointer-events", "none");
+    t.setAttribute("stroke", "#fffdf6");
+    t.setAttribute("stroke-width", "2.6");
+    t.setAttribute("paint-order", "stroke");
+    t.textContent = f.main + (f.sub ? " · " + f.sub : "");
+    gPrev.appendChild(t);
+  }
+
+  // 弹窗与按钮只绑一次；innerHTML 重建不影响（法术按钮走委托）
+  (function bindSpellUI(){
+    var btn = document.getElementById("btnSpell");
+    if (btn && btn.addEventListener) {
+      btn.addEventListener("click", function(){
+        if (castMode) { cancelCast(); return; }
+        toggleSpellBook();
+      });
+    }
+    var close = document.getElementById("spellClose");
+    if (close && close.addEventListener) close.addEventListener("click", function(){ closeSpellBook(); });
+    var scrim = document.getElementById("spellScrim");
+    if (scrim && scrim.addEventListener) scrim.addEventListener("click", function(){ closeSpellBook(); });
+    var box = document.getElementById("spellBook");
+    if (box && box.addEventListener) {
+      box.addEventListener("click", function(e){
+        var t = e.target;
+        while (t && t !== box && !(t.dataset && t.dataset.spell)) t = t.parentNode;
+        if (!t || t === box) return;
+        beginCast(t.dataset.spell);
+      });
+    }
+    // Esc：先退瞄准，再关弹窗（探针的 document 桩没有 addEventListener，跳过）
+    if (typeof document !== "undefined" && document.addEventListener) {
+      document.addEventListener("keydown", function(e){
+        if (!e || (e.key !== "Escape" && e.keyCode !== 27)) return;
+        if (castMode) { cancelCast(); return; }
+        closeSpellBook();
+      });
+    }
+    // 右键退出瞄准（比点空地更"不丢状态"）
+    var field = document.getElementById("field");
+    if (field && field.addEventListener) {
+      field.addEventListener("contextmenu", function(e){
+        if (!castMode) return;
+        if (e && e.preventDefault) e.preventDefault();
+        cancelCast();
+      });
+    }
   })();
 
   var units, order, roundNo, selected, hasMoved, moveMap, atkSet, over;
@@ -1456,6 +1775,7 @@
     turnClaimed = false;      // 新的一手：清掉"谁来执行"的去重标志
     pendingAttack = null; hoverUnit = null;
     approachMode = null; chosenApproach = null; lastHoverId = null;
+    castMode = null; closeSpellBook();      // 换手了：退出施法瞄准，收起法术书
     if (act.side === "us" && !quickMode && !autoMode) {
       playerTurn(act);
     } else {
@@ -2344,6 +2664,14 @@
   // 鼠标扫到六边形：如果它是候选落脚格，就切到这一格
   function onHexHover(x, y) {
     if (over || quickMode || autoMode) return;
+    // 瞄准态：扫格子只是换目标预览（决定紫圈画在谁身上）
+    if (castMode) {
+      var su = unitAt(x, y);
+      hoverUnit = su;
+      spellHoverHint(su);
+      renderPreview();
+      return;
+    }
     var act = current();
     if (!act) return;
     if (hasMoved) return;           // 动作已用掉，这一手马上交棒，别再出预览
@@ -2483,6 +2811,7 @@
     if (!winner) winner = alive("us").length ? "us" : "them";
     over = winner;
     castMode = null;                    // 收场时退出施法瞄准，免得点击落到战场上去
+    closeSpellBook();
     var box = document.getElementById("field");
     var d = document.createElement("div");
     d.className = "over";
@@ -2891,6 +3220,7 @@
 
   function renderPreview() {
     gPrev.innerHTML = "";
+    if (castMode) { renderSpellPreview(); return; }   // 瞄准态只管法术目标，不画走位/攻击
     var act = current();
     if (!act || over) return;
     var t = (approachMode && approachMode.target) ? approachMode.target : hoverUnit;
@@ -3077,6 +3407,12 @@
   }
 
   function hoverPreview(u) {
+    if (castMode) {            // 瞄准态：悬停只用来挑施法目标
+      hoverUnit = u;
+      spellHoverHint(u);
+      renderPreview();
+      return;
+    }
     hoverUnit = u;
     var act = current();
     if (!u || !act || u.dead || u.side === act.side) { renderPreview(); return; }
@@ -3115,12 +3451,14 @@
 
   function render() {
     var act = current();
+    // 瞄准态下棋盘只讲"能点谁"：把走位蓝格与攻击红格收起来，不然三套高亮打架
+    var casting = !!castMode;
 
     for (var y = 0; y < H; y++) {
       for (var x2 = 0; x2 < W; x2++) {
         var e = hexEls[key(x2, y)];
         e.classList.remove("in-range", "atk", "sel", "can-move", "can-attack");
-        if (selected && selected === act) {
+        if (!casting && selected && selected === act) {
           if (moveMap.has(key(x2, y)) && moveMap.get(key(x2, y)) > 0 && !unitAt(x2, y)) {
             e.classList.add("in-range", "can-move");
           }
@@ -3177,6 +3515,8 @@
     }
 
     renderSpellBook();
+    syncSpellPanel();
+    syncSpellBtn();
     renderQueue();
 
     var myTurn = !!act && act.side === "us" && !over && !quickMode && !autoMode;
@@ -3324,6 +3664,7 @@
     eachSide(function(side){ if (manaOf(side) > manaCeil(side)) mana[side] = manaCeil(side); });
     castsThisRound.us = 0; castsThisRound.them = 0;
     castMode = null;
+    spellOpen = false;                  // 新战斗一律从收起状态开始
     roundNo = 1;
     order = [];
     selected = null;

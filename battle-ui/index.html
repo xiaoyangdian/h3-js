@@ -856,10 +856,34 @@
     return null;
   }
 
+  /* 行动顺序 = 速度降序；同速按 ROSTER 次序（我方 5 支在前），保证排序稳定。
+     原版：加速/减速**立刻**改变行动顺序，不必等到下一轮。 */
+  function sortBySpeed(ids) {
+    var rank = {}, sp = {};
+    (units || []).forEach(function(u, i){ rank[u.id] = i; sp[u.id] = u.speed || 0; });
+    return ids.slice().sort(function(a, b){
+      if (sp[b] !== sp[a]) return sp[b] - sp[a];
+      return rank[a] - rank[b];
+    });
+  }
+
+  /* 速度一变就重排队列。正在行动的部队（order[0]）保持原位——
+     它这一手已经开始，不该被加速/减速顶掉；其余按新速度重排。
+     queueLock 用于"已知随后会整体重建队列"的路径（startRound 里按轮递减效果）。 */
+  var queueLock = 0;
+  function reorderQueue() {
+    if (queueLock || !order || order.length < 2) return;
+    var next = [order[0]].concat(sortBySpeed(order.slice(1)));
+    for (var i = 0; i < next.length; i++) {
+      if (next[i] !== order[i]) { order = next; return; }
+    }
+  }
+
   /* 单位数值 = 裸值 + 效果。所有会改数值的东西都必须走这里，
-     不许直接在效果回调里改 u.speed / u.dmg（那会漏还原）。 */
+     不许直接在效果回调里改 u.speed / u.dmg（那会漏还原、也会叠加）。 */
   function recomputeUnit(u) {
     if (!u.baseDmg) return;
+    var wasSpeed = u.speed;
     u.speed = u.baseSpeed;
     u.dmg = u.baseDmg.slice();
     (u.effects || []).forEach(function(e){
@@ -871,6 +895,7 @@
         u.dmg[0] = v; u.dmg[1] = v;
       }
     });
+    if (u.speed !== wasSpeed) reorderQueue();      // 速度变了：队列立刻跟着变
   }
 
   function removeEffect(u, spellKey) {
@@ -991,8 +1016,9 @@
   function renderSpellBook() {
     var box = document.getElementById("spellBook");
     if (!box) return;
-    var act = current();
-    var side = (act && act.side) || "us";
+    /* 法术书永远是**玩家自己（我方）**的：敌方部队行动中，整本禁用。
+       原版 AI 会自己施法，但那属于 AI 回合，不能由玩家代按。 */
+    var side = "us";
     var canCast = canCastNow(side) && !castsThisRound[side];
     var h = '<div class="hd"><span>法术书 · ' + (side === "us" ? "我方" : "敌方") +
             '</span><b>' + manaOf(side) + '/' + manaMax(side) + ' 法力</b></div><div class="grid">';
@@ -1015,8 +1041,8 @@
 
   function beginCast(key) {
     if (!SPELLS[key]) return false;
-    var act = current(), side = act ? act.side : null;
-    if (!side || !canCastNow(side)) { setHint("只在我方单位行动时才能施法"); return false; }
+    var side = "us";                    // 玩家只操控我方英雄
+    if (!canCastNow(side)) { setHint("只在我方单位行动时才能施法"); return false; }
     if (castsThisRound[side]) { setHint("本回合已经施过法了（每回合一次）"); return false; }
     if (manaOf(side) < SPELLS[key].cost) { setHint("法力不足：需要 " + SPELLS[key].cost + " 点"); return false; }
     if (spellIsMass(key, side)) {                 // 专家全体：不用选目标
@@ -1032,7 +1058,7 @@
   }
 
   function handleSpellClick(x, y) {
-    var act = current(), side = act ? act.side : null;
+    var side = "us";                    // 同上：只认我方英雄
     var u = unitAt(x, y);
     if (!u) { castMode = null; setHint("已取消施法"); render(); return null; }
     var res = castSpell(side, castMode, u);
@@ -1347,15 +1373,15 @@
 
   function startRound() {
     /* 法术效果按**轮**递减（原型自定：原版按施法者回合结算，这里压成轮粒度）。
-       必须先递减再排顺序——加速到期的那一队，本轮就该按新速度排队。 */
+       必须先递减再排顺序——加速到期的那一队，本轮就该按新速度排队。
+       递减过程中速度会变，但这里反正要重建整条队列，先锁住实时重排。 */
     var expired = [];
+    queueLock++;
     units.forEach(function(u){
       tickEffects(u).forEach(function(e){ expired.push({ u: u, e: e }); });
     });
-    order = alive().slice().sort(function(a, b){
-      if (b.speed !== a.speed) return b.speed - a.speed;
-      return a.side === "us" ? -1 : 1;
-    }).map(function(u){ return u.id; });
+    queueLock--;
+    order = sortBySpeed(alive().map(function(u){ return u.id; }));
     units.forEach(function(u){
       u.retaliated = false;
       u.retaliationsLeft = u.retaliating || 1;   // 多次反击：每回合回满次数

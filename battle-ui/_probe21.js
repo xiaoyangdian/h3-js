@@ -86,7 +86,9 @@ ok('默认攻击 1', D.attack === 1, D.attack);
 ok('默认防御 1', D.defense === 1, D.defense);
 ok('默认力量 2', D.spellpower === 2, D.spellpower);
 ok('默认知识 3（→ 30 法力）', D.knowledge === 3, D.knowledge);
-ok('默认精通 0（初级）', D.mastery === 0, D.mastery);
+ok('默认魔法技能全 0（魔力 + 四系都在基础级）',
+   D.sorcery === 0 && D.air === 0 && D.earth === 0 && D.fire === 0 && D.water === 0,
+   [D.sorcery, D.air, D.earth, D.fire, D.water].join('/'));
 ok('默认幸运 0（原版开局没有幸运加成）', D.luck === 0, D.luck);
 ok('默认士气 0', D.morale === 0, D.morale);
 ok('默认战术 0', D.tactics === 0, D.tactics);
@@ -94,13 +96,14 @@ ok('我方英雄开局就带这套数值',
    hero('us').attack === 1 && hero('us').knowledge === 3 && hero('us').spellpower === 2,
    JSON.stringify(hero('us')));
 ok('敌方与我方对称（同一套默认）',
-   ['attack','defense','spellpower','knowledge','mastery','luck','morale','tactics']
+   ['attack','defense','spellpower','knowledge','sorcery','air','earth','fire','water','luck','morale','tactics']
      .every(function(k){ return hero('us')[k] === hero('them')[k]; }));
 ok('默认值不是"全 0"（有 4 项非 0）',
    ['attack','defense','spellpower','knowledge'].filter(function(k){ return hero('us')[k] > 0; }).length === 4);
 ok('默认值都在面板上下界内', (function(){
   var specs = [['attack',0,20],['defense',0,20],['spellpower',0,20],['knowledge',0,20],
-               ['mastery',0,2],['luck',-3,3],['morale',-3,3],['tactics',0,3]];
+               ['sorcery',0,2],['air',0,2],['earth',0,2],['fire',0,2],['water',0,2],
+               ['luck',-3,3],['morale',-3,3],['tactics',0,3]];
   return specs.every(function(s){ var v = hero('us')[s[0]]; return v >= s[1] && v <= s[2]; });
 })());
 ok('默认英雄名字没被默认值表盖掉', hero('us').name === '我方英雄', hero('us').name);

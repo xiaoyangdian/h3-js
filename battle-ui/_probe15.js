@@ -118,7 +118,7 @@ console.log('--- 2. 测试契约补挂：探针注入串没写，也能拿到 --
 ok('__T.heroes 已补挂为函数', typeof T.heroes === 'function', typeof T.heroes);
 ok('__T.setHero 已补挂为函数', typeof T.setHero === 'function', typeof T.setHero);
 ok('__T.resetHeroes 已补挂为函数', typeof T.resetHeroes === 'function', typeof T.resetHeroes);
-ok('heroes().us 有 9 个键（8 数值 + name）', Object.keys(T.heroes().us).length === 9, Object.keys(T.heroes().us).join(','));
+ok('heroes().us 有 13 个键（12 数值 + name；魔力与四系是 5 项）', Object.keys(T.heroes().us).length === 13, Object.keys(T.heroes().us).join(','));
 
 // ════════════════════════════════════════════════════════════════
 console.log('--- 3. 英雄攻击：加到生物攻击上，进 I1 ---');
@@ -240,7 +240,7 @@ ok('重生/亡灵等图鉴字段不被英雄覆盖', (function(){
 console.log('--- 10. 面板与快速战斗回归 ---');
 noHero();
 var hb = T.heroBarHtml();
-ok('英雄面板有 16 个输入框（8 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 16,
+ok('英雄面板有 24 个输入框（12 项 × 2 方）', (hb.match(/data-stat=/g) || []).length === 24,
    (hb.match(/data-stat=/g) || []).length);
 ok('全 0 时没有 .on 高亮', hb.indexOf('class="on"') < 0);
 T.setHero('us', 'attack', 2);

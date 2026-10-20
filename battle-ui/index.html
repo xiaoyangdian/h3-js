@@ -202,6 +202,28 @@
   .hex.spell-ok{fill:#e4e0f6;stroke:#8878bd;stroke-width:1.6;stroke-dasharray:6 3}
   .hex.spell-no{fill:#dcdcd2;stroke:#adada0;stroke-width:1;stroke-dasharray:2 3;opacity:.8}
 
+  /* ── 悬停信息窗：鼠标扫过部队时给一张小卡（攻/防/生命/数量/速度/弹药/身上魔法） ── */
+  .unitip{position:fixed;left:0;top:0;z-index:60;display:none;pointer-events:none;
+    min-width:158px;max-width:250px;padding:7px 9px 8px;
+    background:var(--paper);border:1px solid var(--line);border-radius:10px;
+    box-shadow:0 10px 28px rgba(20,24,16,.22);font-size:11.5px;line-height:1.45;
+    color:var(--ink);font-variant-numeric:tabular-nums}
+  .unitip.show{display:block}
+  .unitip .ut-h{display:flex;align-items:center;gap:5px;margin-bottom:2px}
+  .unitip .ut-h b{font-size:12.5px;font-weight:600}
+  .unitip .ut-side{font-size:10px;padding:0 5px;border-radius:5px;color:#fff;line-height:1.5}
+  .unitip .ut-side.us{background:var(--us)} .unitip .ut-side.them{background:var(--them)}
+  .unitip .ut-tag{font-size:10px;padding:0 5px;border-radius:5px;line-height:1.5;
+    background:#fff4d8;border:1px solid #e0b855;color:#7a5c14}
+  .unitip .ut-c{font-size:11px;color:var(--ink2)}
+  .unitip .ut-g{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:1px 6px;margin:4px 0 2px}
+  .unitip .ut-g i{font-style:normal;color:var(--ink3);font-size:10.5px}
+  .unitip .ut-g b{font-weight:500;color:var(--ink)}
+  .unitip .ut-eff,.unitip .ut-tr{font-size:10.5px;color:var(--ink3);margin-top:3px}
+  .unitip .ut-eff .buff{color:#3f7a46}
+  .unitip .ut-eff .debuff{color:#a2483f}
+  .unitip .ut-sep{height:1px;background:var(--line);margin:5px 0 3px}
+
   .card{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:12px}
   .card h3{margin:0 0 8px;font-size:12px;font-weight:500;color:var(--ink3)}
   .who{display:flex;align-items:center;gap:9px;margin-bottom:8px}
@@ -265,6 +287,8 @@
           </div>
         </div>
       </div>
+      <!-- 悬停信息窗：鼠标扫过部队时出现，跟着指针走（position:fixed，不进 layout） -->
+      <div class="unitip" id="unitTip"></div>
       <div class="confirmbar" id="confirmBar">
         <div class="txt" id="confirmText"></div>
         <button id="cfNo">取消</button>
@@ -788,6 +812,22 @@
       return cls;
     };
     box.startRoundNow = function(){ roundNo++; startRound(); };
+    // ── 悬停信息窗（_probe22）──
+    box.showUnitTip = showUnitTip;
+    box.hideUnitTip = hideUnitTip;
+    box.refreshUnitTip = refreshUnitTip;
+    box.unitTipHtml = unitTipHtml;
+    box.lastCreatureHp = lastCreatureHp;
+    box.tipUnit = function(){ return tipUnit; };
+    box.tipVisible = function(){
+      var t = document.getElementById("unitTip");
+      return !!(t && t.classList && t.classList.contains && t.classList.contains("show"));
+    };
+    box.tipText = function(){
+      var t = document.getElementById("unitTip");
+      // 探针的桩只存 HTML：把标签剥掉，断言"看得见哪些字"
+      return ((t && t._html) || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+    };
   }
 
   /* ══════════════ 怪物图鉴 BESTIARY ══════════════
@@ -2961,8 +3001,9 @@
       ev.stopPropagation();
       onHexClick({ currentTarget: { dataset: { x: u.x, y: u.y } } });
     });
-    g.addEventListener("mouseenter", function(){ hoverPreview(u); });
-    g.addEventListener("mouseleave", function(){ hoverPreview(null); });
+    g.addEventListener("mouseenter", function(ev){ hoverPreview(u); showUnitTip(u, ev); });
+    g.addEventListener("mousemove", function(ev){ if (tipUnit === u) positionUnitTip(tipEl(), ev); });
+    g.addEventListener("mouseleave", function(){ hoverPreview(null); hideUnitTip(); });
 
     gUnit.appendChild(g);
     u.el = g;
@@ -3491,6 +3532,99 @@
     renderPreview();
   }
 
+  /* ══════════════ 悬停信息窗（2026-10-20 用户要求） ══════════════
+     鼠标扫过哪支部队就看哪支：攻 / 防 / 伤 / 速 / 数量 / 生命 / 弹药（远程才有）/
+     身上魔法（还剩几回合）。**纯读**，不改任何战场状态，也不拦鼠标（pointer-events:none）。
+
+     「生命（最后一只的）」口径：总血 hp 里，最上面那只还剩多少
+       = hp − (数量 − 1) × 单只血量
+     例：3 条绿龙、单只 180、总血 400 → 最后一只 40/180。
+     这是原版"第 N 只受创"的读法，比只给总血有用（总血 400 看不出还能挨几下）。 */
+  var tipUnit = null;
+
+  function lastCreatureHp(u) {
+    var per = u.perHp || 0, n = Math.max(1, u.count || 0);
+    if (per <= 0) return Math.max(0, u.hp || 0);
+    return Math.max(0, Math.min(per, (u.hp || 0) - (n - 1) * per));
+  }
+
+  function effectsText(u) {
+    var es = u.effects || [];
+    if (!es.length) return '<div class="ut-eff">身上魔法：无</div>';
+    return '<div class="ut-eff">身上魔法：' + es.map(function(e){
+      return '<span class="' + (e.kind || "") + '">' + e.name +
+             (e.remaining ? " " + e.remaining + " 回合" : "") + '</span>';
+    }).join(" · ") + '</div>';
+  }
+
+  function unitTipHtml(u) {
+    if (!u) return "";
+    var hp = Math.max(0, u.hp || 0), max = u.maxHp || 0, per = u.perHp || 0;
+    var h = '<div class="ut-h"><b>' + u.name + '</b>' +
+      '<span class="ut-side ' + u.side + '">' + (u.side === "us" ? "我方" : "敌方") + '</span>' +
+      (u.defending ? '<span class="ut-tag">防御中</span>' : '') + '</div>' +
+      '<div class="ut-c">× ' + (u.count || 0) + ' · 生命 ' + hp + '/' + max +
+        ' <span style="color:var(--ink3)">（最后一只 ' + lastCreatureHp(u) + '/' + per + '）</span></div>' +
+      '<div class="ut-g">' +
+        '<i>攻</i><b>' + u.att + '</b><i>防</i><b>' + u.def + '</b>' +
+        '<i>速</i><b>' + u.speed + '</b>' +
+        '<i>伤</i><b>' + (u.dmg ? u.dmg[0] + '–' + u.dmg[1] : "—") + '</b>' +
+      '</div>';
+    if (u.ranged) {                      // 弹药只有远程单位才有；耗尽要说出来，不然看不出它为什么在近战
+      var shots = u.shots || 0;
+      h += '<div class="ut-g"><i>弹</i><b>' + shots + '/' + (u.maxShots || 0) + '</b>' +
+           '<i></i><b style="font-weight:400;color:var(--ink3)">' +
+             (shots ? "远程" : "弹药尽·近战") + '</b></div>';
+    }
+    h += effectsText(u);
+    var tr = traitNames(u);
+    if (tr.length) h += '<div class="ut-tr">特性：' + tr.join(" · ") + '</div>';
+    return h;
+  }
+
+  function tipEl() { return document.getElementById("unitTip"); }
+
+  function positionUnitTip(tip, ev) {
+    // 探针的 DOM 桩没有指针坐标（也没有 window），这里只验内容不验位置
+    if (!tip || !ev || ev.clientX == null) return;
+    var pad = 14;
+    var w = tip.offsetWidth || 180, h = tip.offsetHeight || 110;
+    var winW = (typeof window !== "undefined" && window.innerWidth) || 0;
+    var winH = (typeof window !== "undefined" && window.innerHeight) || 0;
+    var x = ev.clientX + pad, y = ev.clientY + pad;
+    if (winW && x + w > winW - 8) x = Math.max(8, ev.clientX - w - pad);   // 贴右边就翻到左侧
+    if (winH && y + h > winH - 8) y = Math.max(8, ev.clientY - h - pad);   // 贴底就翻到上方
+    tip.style.left = Math.round(x) + "px";
+    tip.style.top = Math.round(y) + "px";
+  }
+
+  function showUnitTip(u, ev) {
+    var tip = tipEl();
+    if (!tip) return null;
+    if (!u || u.dead || over) { hideUnitTip(); return null; }
+    tipUnit = u;
+    tip.innerHTML = unitTipHtml(u);
+    if (tip.classList && tip.classList.add) tip.classList.add("show");
+    positionUnitTip(tip, ev);
+    return tipUnit;
+  }
+
+  function hideUnitTip() {
+    var tip = tipEl();
+    tipUnit = null;
+    if (tip && tip.classList && tip.classList.remove) tip.classList.remove("show");
+  }
+
+  /* 战场变了（掉血 / 效果到期 / 阵亡）→ 开着的窗跟着改；死了或收场就收起来，
+     别留一张过期卡在那儿。 */
+  function refreshUnitTip() {
+    if (!tipUnit) return;
+    var tip = tipEl();
+    if (!tip) { tipUnit = null; return; }
+    if (tipUnit.dead || over || (units || []).indexOf(tipUnit) < 0) { hideUnitTip(); return; }
+    tip.innerHTML = unitTipHtml(tipUnit);
+  }
+
   function render() {
     var act = current();
     // 瞄准态下棋盘只讲"能点谁"：把走位蓝格与攻击红格收起来，不然三套高亮打架
@@ -3567,6 +3701,7 @@
     document.getElementById("btnWait").disabled = !canChoose;
 
     renderPreview();
+    refreshUnitTip();          // 掉血/效果到期/阵亡后，开着的悬停窗跟着更新
     updateConfirmBar();
   }
 
@@ -3713,6 +3848,7 @@
     castsThisRound.us = 0; castsThisRound.them = 0;
     castMode = null;
     spellOpen = false;                  // 新战斗一律从收起状态开始
+    hideUnitTip();                      // 悬停窗属于上一场，别带过来
     roundNo = 1;
     order = [];
     selected = null;
